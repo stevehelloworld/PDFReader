@@ -46,9 +46,26 @@ extension PDFDocument {
 // MARK: - Reading Mode Enum (Common)
 enum ReadingMode: String, CaseIterable, Identifiable {
     case singlePage = "單頁"
-    case twoPagesLTR = "雙頁 (左至右)"
-    case twoPagesRTL = "雙頁 (書本模式)"
+    case twoPagesLTR = "雙頁左至右"
+    case twoPagesRTL = "雙頁右至左"
+    
     var id: String { self.rawValue }
+    
+    var icon: String {
+        switch self {
+        case .singlePage: return "doc.text"
+        case .twoPagesLTR: return "book.closed"
+        case .twoPagesRTL: return "text.justify.trailing"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .singlePage: return "單頁模式"
+        case .twoPagesLTR: return "雙頁模式（左至右）"
+        case .twoPagesRTL: return "雙頁模式（右至左）"
+        }
+    }
 }
 
 // MARK: - Zoom Level Enum
@@ -319,14 +336,22 @@ struct ContentView: View {
             Divider()
             
             // Reading mode controls
-            Picker("閱讀模式", selection: $readingMode) {
+            HStack(spacing: 2) {
                 ForEach(ReadingMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Button(action: {
+                        readingMode = mode
+                    }) {
+                        Image(systemName: mode.icon)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.borderless)
+                    .background(readingMode == mode ? Color.accentColor.opacity(0.2) : Color.clear)
+                    .cornerRadius(4)
+                    .help(mode.description)
                 }
             }
-            .pickerStyle(.menu)
-            .frame(width: 140)
-            .help("切換閱讀模式")
+            .padding(.horizontal, 4)
+            
             Divider()
         }
 
