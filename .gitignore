@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
+# Xcode
+xcuserdata/
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+
+# Build
+build/
+DerivedData/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# Other
+*.moved-aside
+*.swp
+*~.nib
