@@ -92,6 +92,91 @@ enum PDFError: LocalizedError {
     }
 }
 
+// MARK: - Recent Files and Reading Progress
+struct RecentFile: Codable, Identifiable {
+    let id: String // File path as ID
+    let path: String
+    let name: String
+    let lastOpened: Date
+    var currentPage: Int
+    var totalPages: Int
+    var readingMode: String
+    
+    init(path: String, name: String, currentPage: Int = 1, totalPages: Int = 0, readingMode: ReadingMode = .singlePage) {
+        self.id = path
+        self.path = path
+        self.name = name
+        self.lastOpened = Date()
+        self.currentPage = currentPage
+        self.totalPages = totalPages
+        self.readingMode = readingMode.rawValue
+    }
+}
+
+class PDFHistoryManager: ObservableObject {
+    static let shared = PDFHistoryManager()
+    
+    @Published var recentFiles: [RecentFile] = []
+    
+    private let maxRecentFiles = 10
+    private let recentFilesKey = "recentPDFFiles"
+    
+    init() {
+        loadRecentFiles()
+    }
+    
+    func loadRecentFiles() {
+        if let data = UserDefaults.standard.data(forKey: recentFilesKey),
+           let decoded = try? JSONDecoder().decode([RecentFile].self, from: data) {
+            recentFiles = decoded.sorted { $0.lastOpened > $1.lastOpened }
+        }
+    }
+    
+    func saveRecentFiles() {
+        if let encoded = try? JSONEncoder().encode(recentFiles) {
+            UserDefaults.standard.set(encoded, forKey: recentFilesKey)
+        }
+    }
+    
+    func addRecentFile(path: String, name: String, currentPage: Int = 1, totalPages: Int = 0, readingMode: ReadingMode = .singlePage) {
+        // Remove existing entry if present
+        recentFiles.removeAll { $0.path == path }
+        
+        // Add new entry
+        let newFile = RecentFile(path: path, name: name, currentPage: currentPage, totalPages: totalPages, readingMode: readingMode)
+        recentFiles.insert(newFile, at: 0)
+        
+        // Keep only the most recent files
+        if recentFiles.count > maxRecentFiles {
+            recentFiles = Array(recentFiles.prefix(maxRecentFiles))
+        }
+        
+        saveRecentFiles()
+    }
+    
+    func updateProgress(path: String, currentPage: Int, readingMode: ReadingMode) {
+        if let index = recentFiles.firstIndex(where: { $0.path == path }) {
+            recentFiles[index].currentPage = currentPage
+            recentFiles[index].readingMode = readingMode.rawValue
+            saveRecentFiles()
+        }
+    }
+    
+    func getProgress(for path: String) -> RecentFile? {
+        return recentFiles.first { $0.path == path }
+    }
+    
+    func removeFile(at path: String) {
+        recentFiles.removeAll { $0.path == path }
+        saveRecentFiles()
+    }
+    
+    func clearAll() {
+        recentFiles.removeAll()
+        saveRecentFiles()
+    }
+}
+
 // MARK: - PDF View (Platform-Agnostic Wrapper)
 struct PDFKitView: View {
     let document: PDFDocument
@@ -113,6 +198,7 @@ struct PDFKitView: View {
 struct ContentView: View {
     @State private var originalDocument: PDFDocument?
     @State private var displayedDocument: PDFDocument?
+    @State private var currentFilePath: String?
     
     @State private var readingMode: ReadingMode = .singlePage
     @State private var isFilePickerPresented = false
@@ -130,6 +216,9 @@ struct ContentView: View {
     // Error handling
     @State private var errorMessage: String?
     @State private var showError = false
+    
+    // History management
+    @StateObject private var historyManager = PDFHistoryManager.shared
 
     private var mainContent: some View {
         VStack(spacing: 0) {
@@ -141,12 +230,38 @@ struct ContentView: View {
 #endif
                     }
             } else {
-                VStack {
-                    Image(systemName: "doc.text.magnifyingglass").font(.system(size: 60)).padding(.bottom)
-                    Text("請開啟一個 PDF 檔案").font(.title)
-                }.foregroundColor(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyStateView
             }
         }
+    }
+    
+    private var emptyStateView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 60))
+                .foregroundColor(.secondary)
+            
+            Text("請開啟一個 PDF 檔案")
+                .font(.title)
+                .foregroundColor(.secondary)
+            
+            if !historyManager.recentFiles.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("最近開啟")
+                        .font(.headline)
+                        .padding(.top, 20)
+                    
+                    ForEach(historyManager.recentFiles.prefix(5)) { file in
+                        RecentFileRow(file: file) {
+                            openRecentFile(file)
+                        }
+                    }
+                }
+                .frame(maxWidth: 400)
+                .padding()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -366,8 +481,17 @@ struct ContentView: View {
         
         // Update page info
         totalPages = doc.pageCount
-        currentPage = 1
-        pageInputText = "1"
+        
+        // Try to restore saved page
+        if let path = currentFilePath,
+           let progress = historyManager.getProgress(for: path),
+           progress.currentPage <= totalPages {
+            currentPage = progress.currentPage
+            pageInputText = "\(progress.currentPage)"
+        } else {
+            currentPage = 1
+            pageInputText = "1"
+        }
     }
     
     // MARK: - Page Navigation Methods
@@ -375,6 +499,7 @@ struct ContentView: View {
         guard pageNumber >= 1 && pageNumber <= totalPages else { return }
         currentPage = pageNumber
         pageInputText = "\(pageNumber)"
+        saveCurrentProgress()
         // The actual page change will be handled by the PDFView through binding
     }
     
@@ -440,6 +565,103 @@ struct ContentView: View {
         }
         
         self.originalDocument = document
+        self.currentFilePath = url.path
+        
+        // Try to restore reading progress
+        let fileName = url.lastPathComponent
+        if let progress = historyManager.getProgress(for: url.path) {
+            // Restore saved progress
+            if let mode = ReadingMode.allCases.first(where: { $0.rawValue == progress.readingMode }) {
+                readingMode = mode
+            }
+        }
+        
+        // Add to recent files (will be updated with correct page when document loads)
+        historyManager.addRecentFile(
+            path: url.path,
+            name: fileName,
+            currentPage: 1,
+            totalPages: document.pageCount,
+            readingMode: readingMode
+        )
+    }
+    
+    private func openRecentFile(_ file: RecentFile) {
+        let url = URL(fileURLWithPath: file.path)
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            errorMessage = "檔案已移動或刪除"
+            showError = true
+            historyManager.removeFile(at: file.path)
+            return
+        }
+        loadPDF(from: url)
+    }
+    
+    private func saveCurrentProgress() {
+        guard let path = currentFilePath else { return }
+        historyManager.updateProgress(path: path, currentPage: currentPage, readingMode: readingMode)
+    }
+}
+
+// MARK: - Recent File Row Component
+struct RecentFileRow: View {
+    let file: RecentFile
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack {
+                Image(systemName: "doc.fill")
+                    .foregroundColor(.blue)
+                    .font(.title2)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(file.name)
+                        .font(.body)
+                        .lineLimit(1)
+                    
+                    HStack {
+                        Text("第 \(file.currentPage) 頁")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text(formatDate(file.lastOpened))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(Color.gray.opacity(0.1))
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            return "今天 " + formatter.string(from: date)
+        } else if calendar.isDateInYesterday(date) {
+            return "昨天"
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .short
+            return formatter.string(from: date)
+        }
     }
 }
 
