@@ -599,6 +599,8 @@ struct ContentView: View {
             return
         }
         
+        let fileName = url.lastPathComponent
+        
         self.originalDocument = document
         self.currentFilePath = url.path
         self.currentFileName = fileName
