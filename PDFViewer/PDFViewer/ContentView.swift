@@ -143,16 +143,9 @@ class PDFHistoryManager: ObservableObject {
     }
     
     func loadRecentFiles() {
-        print("📚 [載入資料] 開始讀取 UserDefaults...")
         if let data = UserDefaults.standard.data(forKey: recentFilesKey),
            let decoded = try? JSONDecoder().decode([RecentFile].self, from: data) {
             recentFiles = decoded.sorted { $0.lastOpened > $1.lastOpened }
-            print("📚 [載入資料] 成功載入 \(recentFiles.count) 個檔案")
-            for file in recentFiles {
-                print("📚 [載入資料] - \(file.name), 頁碼: \(file.currentPage)")
-            }
-        } else {
-            print("📚 [載入資料] 未找到資料或解碼失敗")
         }
     }
     
@@ -160,10 +153,6 @@ class PDFHistoryManager: ObservableObject {
         if let encoded = try? JSONEncoder().encode(recentFiles) {
             UserDefaults.standard.set(encoded, forKey: recentFilesKey)
             UserDefaults.standard.synchronize() // Force sync to disk
-            print("💿 [資料庫] 已儲存 \(recentFiles.count) 個檔案記錄")
-            if let first = recentFiles.first {
-                print("💿 [資料庫] 最新記錄: \(first.name), 頁碼: \(first.currentPage)")
-            }
         }
     }
     
@@ -462,7 +451,6 @@ struct ContentView: View {
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .background || newPhase == .inactive {
                 // Force save when app goes to background
-                print("🚫 [應用狀態] 應用進入背景，強制儲存進度")
                 saveCurrentProgress()
                 // Force synchronize UserDefaults
                 UserDefaults.standard.synchronize()
@@ -541,15 +529,12 @@ struct ContentView: View {
         if let fileName = currentFileName,
            let progress = historyManager.getProgress(for: fileName),
            progress.currentPage <= totalPages {
-            print("📖 [進度恢復] 檔案: \(fileName)")
-            print("📖 [進度恢復] 恢復頁碼: \(progress.currentPage) / \(totalPages)")
             currentPage = progress.currentPage
             pageInputText = "\(progress.currentPage)"
             // Set flag to trigger page restoration after document loads
             needsPageRestoration = true
         } else if currentPage == 0 || currentPage > totalPages {
             // Only reset to 1 if current page is invalid
-            print("📖 [進度恢復] 沒有儲存的進度或頁碼超出範圍，從第 1 頁開始")
             currentPage = 1
             pageInputText = "1"
         }
@@ -631,15 +616,7 @@ struct ContentView: View {
         self.currentFileName = fileName
         
         // Try to restore reading progress
-        print("🔍 [查詢進度] 查找檔案: \(fileName)")
-        print("🔍 [查詢進度] 資料庫中的檔案數: \(historyManager.recentFiles.count)")
-        for file in historyManager.recentFiles {
-            print("🔍 [查詢進度] - \(file.name), 頁碼: \(file.currentPage)")
-        }
-        
         let savedPage = historyManager.getProgress(for: fileName)?.currentPage ?? 1
-        print("🔍 [查詢進度] 查詢結果: \(savedPage == 1 ? "未找到或第1頁" : "找到第\(savedPage)頁")")
-        
         if let progress = historyManager.getProgress(for: fileName) {
             // Restore saved progress
             if let mode = ReadingMode.allCases.first(where: { $0.rawValue == progress.readingMode }) {
@@ -670,10 +647,8 @@ struct ContentView: View {
     
     private func saveCurrentProgress() {
         guard let fileName = currentFileName else { 
-            print("💾 [儲存進度] 沒有 currentFileName，跳過儲存")
             return 
         }
-        print("💾 [儲存進度] 檔案: \(fileName), 頁碼: \(currentPage), 模式: \(readingMode.rawValue)")
         historyManager.updateProgress(name: fileName, currentPage: currentPage, readingMode: readingMode)
     }
 }
@@ -803,14 +778,11 @@ struct macOS_PDFKitView: NSViewRepresentable {
         // Update current page - always jump to the desired page
         if currentPage >= 1, currentPage <= (nsView.document?.pageCount ?? 0),
            let targetPage = nsView.document?.page(at: currentPage - 1) {
-            print("🔄 [PDFView更新] 目標頁碼: \(currentPage), 文檔變更: \(documentChanged), 當前頁面: \(nsView.currentPage?.label ?? "nil")")
             // Force jump to target page, especially important after document load
             if documentChanged || nsView.currentPage != targetPage {
-                print("✅ [PDFView更新] 執行跳轉到第 \(currentPage) 頁")
                 // Use async to ensure document is fully loaded
                 DispatchQueue.main.async {
                     nsView.go(to: targetPage)
-                    print("✅ [PDFView更新] 跳轉完成")
                 }
             }
         }
@@ -853,8 +825,6 @@ struct macOS_PDFKitView: NSViewRepresentable {
                 return
             }
             let pageIndex = document.index(for: currentPDFPage)
-            
-            print("📄 [頁碼通知] PDFView 頁碼變更為: \(pageIndex + 1)")
             
             // Update the binding and text field
             DispatchQueue.main.async {
