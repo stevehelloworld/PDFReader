@@ -51,35 +51,56 @@ enum ReadingMode: String, CaseIterable, Identifiable {
     
     var id: String { self.rawValue }
     
+    var label: String {
+        switch self {
+        case .singlePage: return String(localized: "單頁")
+        case .twoPagesLTR: return String(localized: "雙頁左至右")
+        case .twoPagesRTL: return String(localized: "雙頁右至左")
+        }
+    }
+    
     var icon: String {
         switch self {
         case .singlePage: return "doc.text"
-        case .twoPagesLTR: return "book.closed"
-        case .twoPagesRTL: return "text.justify.trailing"
+        case .twoPagesLTR: return "book"
+        case .twoPagesRTL: return "book.closed"
         }
     }
     
     var description: String {
         switch self {
-        case .singlePage: return "單頁模式"
-        case .twoPagesLTR: return "雙頁模式（左至右）"
-        case .twoPagesRTL: return "雙頁模式（右至左）"
+        case .singlePage: return String(localized: "單頁模式")
+        case .twoPagesLTR: return String(localized: "雙頁模式（左至右）")
+        case .twoPagesRTL: return String(localized: "雙頁模式（右至左）")
         }
     }
 }
 
 // MARK: - Zoom Level Enum
 enum ZoomLevel: String, CaseIterable, Identifiable {
-    case fitPage = "適應頁面"
-    case fitWidth = "適應寬度"
-    case percent50 = "50%"
-    case percent75 = "75%"
-    case percent100 = "100%"
-    case percent125 = "125%"
-    case percent150 = "150%"
-    case percent200 = "200%"
+    case fitPage
+    case fitWidth
+    case percent50
+    case percent75
+    case percent100
+    case percent125
+    case percent150
+    case percent200
     
-    var id: String { self.rawValue }
+    var displayName: String {
+        switch self {
+        case .fitPage: return String(localized: "適應頁面")
+        case .fitWidth: return String(localized: "適應寬度")
+        case .percent50: return "50%"
+        case .percent75: return "75%"
+        case .percent100: return "100%"
+        case .percent125: return "125%"
+        case .percent150: return "150%"
+        case .percent200: return "200%"
+        }
+    }
+    
+    var id: String { self.displayName }
     
     var scaleFactor: CGFloat? {
         switch self {
@@ -102,9 +123,9 @@ enum PDFError: LocalizedError {
     
     var errorDescription: String? {
         switch self {
-        case .fileNotFound: return "找不到 PDF 檔案"
-        case .invalidPDF: return "無效的 PDF 檔案或檔案已損壞"
-        case .cannotRead: return "無法讀取 PDF 檔案，請檢查檔案權限"
+        case .fileNotFound: return String(localized: "找不到 PDF 檔案")
+        case .invalidPDF: return String(localized: "無效的 PDF 檔案或檔案已損壞")
+        case .cannotRead: return String(localized: "無法讀取 PDF 檔案，請檢查檔案權限")
         }
     }
 }
@@ -202,10 +223,12 @@ struct PDFKitView: View {
     @Binding var currentPage: Int
     @Binding var pageInputText: String
     @Binding var zoomLevel: ZoomLevel
+    let onPrevious: () -> Void
+    let onNext: () -> Void
 
     var body: some View {
 #if os(macOS)
-        macOS_PDFKitView(document: document, readingMode: $readingMode, currentPage: $currentPage, pageInputText: $pageInputText, zoomLevel: $zoomLevel)
+        macOS_PDFKitView(document: document, readingMode: $readingMode, currentPage: $currentPage, pageInputText: $pageInputText, zoomLevel: $zoomLevel, onPrevious: onPrevious, onNext: onNext)
 #elseif os(iOS)
         iOS_PDFKitView(document: document, readingMode: $readingMode, currentPage: $currentPage, pageInputText: $pageInputText, zoomLevel: $zoomLevel)
 #endif
@@ -246,12 +269,21 @@ struct ContentView: View {
     private var mainContent: some View {
         VStack(spacing: 0) {
             if let document = displayedDocument {
-                PDFKitView(document: document, readingMode: $readingMode, currentPage: $currentPage, pageInputText: $pageInputText, zoomLevel: $currentZoom)
-                    .onTapGesture {
+                // No GeometryReader, no overlay, just the PDFView
+                PDFKitView(
+                    document: document,
+                    readingMode: $readingMode,
+                    currentPage: $currentPage,
+                    pageInputText: $pageInputText,
+                    zoomLevel: $currentZoom,
+                    onPrevious: goToPreviousPage,
+                    onNext: goToNextPage
+                )
+                .onTapGesture {
 #if os(iOS)
-                        withAnimation { isToolbarHidden.toggle() }
+                    withAnimation { isToolbarHidden.toggle() }
 #endif
-                    }
+                }
             } else {
                 emptyStateView
             }
@@ -264,13 +296,13 @@ struct ContentView: View {
                 .font(.system(size: 60))
                 .foregroundColor(.secondary)
             
-            Text("請開啟一個 PDF 檔案")
+            Text(String(localized: "請開啟一個 PDF 檔案"))
                 .font(.title)
                 .foregroundColor(.secondary)
             
             if !historyManager.recentFiles.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("最近開啟")
+                    Text(String(localized: "最近開啟"))
                         .font(.headline)
                         .padding(.top, 20)
                     
@@ -288,82 +320,129 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var toolbarItems: some View {
-        // Page navigation controls
-        if originalDocument != nil {
+    private var navigationToolbarItems: some View {
+        HStack(spacing: 8) {
             Button(action: goToPreviousPage) {
                 Image(systemName: "chevron.left")
             }
             .disabled(currentPage <= 1)
-            .help("上一頁")
+            .help(String(localized: "上一頁"))
             
-            TextField("頁碼", text: $pageInputText)
-                .frame(width: 40)
-                .textFieldStyle(.roundedBorder)
-                .multilineTextAlignment(.center)
-                .onSubmit {
-                    if let pageNum = Int(pageInputText), pageNum != 0 {
-                        goToPage(pageNum)
+            HStack(spacing: 4) {
+                TextField(String(localized: "頁碼"), text: $pageInputText)
+                    .frame(width: 40)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.center)
+                    .onSubmit {
+                        if let pageNum = Int(pageInputText), pageNum != 0 {
+                            goToPage(pageNum)
+                        }
                     }
-                }
-            
-            Text("/")
-            Text("\(totalPages)")
-                .frame(minWidth: 30)
+                
+                Text("/")
+                    .foregroundColor(.secondary)
+                Text("\(totalPages)")
+                    .foregroundColor(.secondary)
+            }
             
             Button(action: goToNextPage) {
                 Image(systemName: "chevron.right")
             }
             .disabled(currentPage >= totalPages)
-            .help("下一頁")
-            
-            Divider()
-            
-            // Zoom controls
-            Button(action: zoomOut) {
-                Image(systemName: "minus.magnifyingglass")
-            }
-            .help("縮小")
-            
-            Picker("縮放", selection: $currentZoom) {
-                ForEach(ZoomLevel.allCases) { level in
-                    Text(level.rawValue).tag(level)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 110)
-            .help("縮放比例")
-            
-            Button(action: zoomIn) {
-                Image(systemName: "plus.magnifyingglass")
-            }
-            .help("放大")
-            
-            Divider()
-            
-            // Reading mode controls
-            HStack(spacing: 2) {
-                ForEach(ReadingMode.allCases) { mode in
-                    Button(action: {
-                        readingMode = mode
-                    }) {
-                        Image(systemName: mode.icon)
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.borderless)
-                    .background(readingMode == mode ? Color.accentColor.opacity(0.2) : Color.clear)
-                    .cornerRadius(4)
-                    .help(mode.description)
-                }
-            }
-            .padding(.horizontal, 4)
-            
-            Divider()
+            .help(String(localized: "下一頁"))
         }
-
-        Button("開啟檔案") {
-            openFile()
-        }.help("選擇要開啟的 PDF 檔案")
+    }
+    
+    @ViewBuilder
+    private var readingModeToolbarItems: some View {
+        HStack(spacing: 0) {
+            ForEach(ReadingMode.allCases) { mode in
+                readingModeButton(for: mode)
+                
+                if mode != ReadingMode.allCases.last {
+                    Divider().frame(height: 20)
+                }
+            }
+        }
+        #if os(macOS)
+        .background(Color(nsColor: .controlBackgroundColor))
+        #else
+        .background(Color(uiColor: .secondarySystemBackground))
+        #endif
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+        )
+    }
+    
+    private func readingModeButton(for mode: ReadingMode) -> some View {
+        Button(action: {
+            readingMode = mode
+        }) {
+            VStack(spacing: 2) {
+                Image(systemName: mode.icon)
+                    .font(.system(size: 16))
+                Text(mode.label)
+                    .font(.caption2)
+            }
+            .frame(height: 40)
+            .padding(.horizontal, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .background(readingMode == mode ? Color.accentColor.opacity(0.15) : Color.clear)
+        .foregroundColor(readingMode == mode ? .accentColor : .primary)
+        .help(mode.description)
+    }
+    
+    @ViewBuilder
+    private var combinedToolbarItems: some View {
+        if originalDocument != nil {
+            navigationToolbarItems
+            Divider()
+            readingModeToolbarItems
+            Divider()
+            zoomToolbarItems
+        } else {
+            Button(action: { openFile() }) {
+                Label(String(localized: "開啟檔案"), systemImage: "doc.badge.plus")
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var zoomToolbarItems: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 0) {
+                Button(action: zoomOut) {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .help(String(localized: "縮小"))
+                
+                Picker(String(localized: "縮放"), selection: $currentZoom) {
+                    ForEach(ZoomLevel.allCases) { level in
+                        Text(level.displayName).tag(level)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 85)
+                .help(String(localized: "縮放比例"))
+                
+                Button(action: zoomIn) {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .help(String(localized: "放大"))
+            }
+            
+            Divider()
+                .frame(height: 20)
+            
+            Button(action: { openFile() }) {
+                Label(String(localized: "開啟"), systemImage: "doc.badge.plus")
+            }
+            .help(String(localized: "選擇要開啟的 PDF 檔案"))
+        }
     }
 
     var body: some View {
@@ -374,46 +453,30 @@ struct ContentView: View {
                 .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in isToolbarHidden = true }
                 .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in isToolbarHidden = false }
                 .toolbar {
-                    ToolbarItemGroup(placement: .primaryAction) { toolbarItems }
+                    ToolbarItem(placement: .navigation) {
+                        if originalDocument != nil {
+                            navigationToolbarItems
+                        }
+                    }
+                    
+                    ToolbarItem(placement: .principal) {
+                        if originalDocument != nil {
+                            readingModeToolbarItems
+                        }
+                    }
+                    
+                    ToolbarItem(placement: .primaryAction) {
+                        if originalDocument != nil {
+                            zoomToolbarItems
+                        } else {
+                            Button(action: { openFile() }) {
+                                Label(String(localized: "開啟檔案"), systemImage: "doc.badge.plus")
+                            }
+                        }
+                    }
                 }
                 .toolbar(isToolbarHidden ? .hidden : .automatic, for: .windowToolbar)
                 .focusedSceneValue(\.isInApp, true)
-                .onKeyPress(.space) {
-                    goToNextPage()
-                    return .handled
-                }
-                .onKeyPress(.pageDown) {
-                    goToNextPage()
-                    return .handled
-                }
-                .onKeyPress(.pageUp) {
-                    goToPreviousPage()
-                    return .handled
-                }
-                .onKeyPress(.home) {
-                    goToPage(1)
-                    return .handled
-                }
-                .onKeyPress(.end) {
-                    goToPage(totalPages)
-                    return .handled
-                }
-                .onKeyPress(.leftArrow) {
-                    goToPreviousPage()
-                    return .handled
-                }
-                .onKeyPress(.rightArrow) {
-                    goToNextPage()
-                    return .handled
-                }
-                .onKeyPress(.upArrow) {
-                    goToPreviousPage()
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    goToNextPage()
-                    return .handled
-                }
 #elseif os(iOS)
             NavigationView {
                 mainContent
@@ -424,15 +487,15 @@ struct ContentView: View {
                         }
                     }
                     .toolbar {
-                        ToolbarItemGroup(placement: .primaryAction) { toolbarItems }
+                        ToolbarItemGroup(placement: .primaryAction) { combinedToolbarItems }
                     }
                     .toolbar(isToolbarHidden ? .hidden : .automatic, for: .navigationBar)
             }
             .navigationViewStyle(.stack)
 #endif
         }
-        .alert("錯誤", isPresented: $showError) {
-            Button("確定", role: .cancel) { }
+        .alert(String(localized: "錯誤"), isPresented: $showError) {
+            Button(String(localized: "確定"), role: .cancel) { }
         } message: {
             if let errorMessage = errorMessage {
                 Text(errorMessage)
@@ -441,12 +504,18 @@ struct ContentView: View {
         .onChange(of: originalDocument) {
             updateDisplayedDocument()
         }
-        .onChange(of: readingMode) {
-            updateDisplayedDocument()
-            saveCurrentProgress()
+        .onChange(of: readingMode) { oldMode, newMode in
+            // Only update if mode actually changed to prevent cycles
+            if oldMode != newMode {
+                updateDisplayedDocument()
+                // Don't call saveCurrentProgress here - it's handled by currentPage onChange
+            }
         }
-        .onChange(of: currentPage) {
-            saveCurrentProgress()
+        .onChange(of: currentPage) { oldPage, newPage in
+            // Only save if page actually changed
+            if oldPage != newPage {
+                saveCurrentProgress()
+            }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .background || newPhase == .inactive {
@@ -460,26 +529,27 @@ struct ContentView: View {
         #if os(macOS)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("開啟檔案...") {
+                Button(String(localized: "開啟檔案")) {
                     openFile()
                 }
                 .keyboardShortcut("o", modifiers: .command)
             }
             
-            CommandMenu("縮放") {
-                Button("放大") {
+            
+            CommandMenu(String(localized: "縮放")) {
+                Button(String(localized: "放大")) {
                     zoomIn()
                 }
                 .keyboardShortcut("+", modifiers: .command)
                 .disabled(originalDocument == nil)
                 
-                Button("縮小") {
+                Button(String(localized: "縮小")) {
                     zoomOut()
                 }
                 .keyboardShortcut("-", modifiers: .command)
                 .disabled(originalDocument == nil)
                 
-                Button("實際大小") {
+                Button(String(localized: "實際大小")) {
                     currentZoom = .percent100
                 }
                 .keyboardShortcut("0", modifiers: .command)
@@ -487,12 +557,12 @@ struct ContentView: View {
                 
                 Divider()
                 
-                Button("適應頁面") {
+                Button(String(localized: "適應頁面")) {
                     currentZoom = .fitPage
                 }
                 .disabled(originalDocument == nil)
                 
-                Button("適應寬度") {
+                Button(String(localized: "適應寬度")) {
                     currentZoom = .fitWidth
                 }
                 .disabled(originalDocument == nil)
@@ -518,25 +588,35 @@ struct ContentView: View {
             displayedDocument = doc
         }
         #else
-        // On macOS, PDFKit handles RTL natively, so we always use the original document.
+        //On macOS, PDFKit handles RTL natively, so we always use the original document.
         displayedDocument = doc
         #endif
         
         // Update page info
-        totalPages = doc.pageCount
+        let newTotalPages = doc.pageCount
+        
+        // Only update if total pages actually changed to avoid triggering onChange
+        if totalPages != newTotalPages {
+            totalPages = newTotalPages
+        }
         
         // Try to restore saved page (don't reset to 1 first to avoid flashing)
-        if let fileName = currentFileName,
-           let progress = historyManager.getProgress(for: fileName),
-           progress.currentPage <= totalPages {
-            currentPage = progress.currentPage
-            pageInputText = "\(progress.currentPage)"
-            // Set flag to trigger page restoration after document loads
-            needsPageRestoration = true
+        // Only do this once per document load, not on every mode change
+        if needsPageRestoration {
+            if let fileName = currentFileName,
+               let progress = historyManager.getProgress(for: fileName),
+               progress.currentPage <= totalPages {
+                currentPage = progress.currentPage
+                pageInputText = "\(progress.currentPage)"
+            }
+            needsPageRestoration = false
         } else if currentPage == 0 || currentPage > totalPages {
             // Only reset to 1 if current page is invalid
             currentPage = 1
             pageInputText = "1"
+        } else {
+            // Update pageInputText to match currentPage without changing currentPage
+            pageInputText = "\(currentPage)"
         }
     }
     
@@ -563,6 +643,14 @@ struct ContentView: View {
     // MARK: - Zoom Methods
     private func zoomIn() {
         let zoomLevels = ZoomLevel.allCases.filter { $0.scaleFactor != nil }
+        
+        // If currently on fitPage or fitWidth, switch to 100% first
+        if currentZoom == .fitPage || currentZoom == .fitWidth {
+            currentZoom = .percent100
+            return
+        }
+        
+        // Otherwise cycle through percentage levels
         if let currentIndex = zoomLevels.firstIndex(of: currentZoom),
            currentIndex < zoomLevels.count - 1 {
             currentZoom = zoomLevels[currentIndex + 1]
@@ -571,6 +659,14 @@ struct ContentView: View {
     
     private func zoomOut() {
         let zoomLevels = ZoomLevel.allCases.filter { $0.scaleFactor != nil }
+        
+        // If currently on fitPage or fitWidth, switch to 100% first
+        if currentZoom == .fitPage || currentZoom == .fitWidth {
+            currentZoom = .percent100
+            return
+        }
+        
+        // Otherwise cycle through percentage levels
         if let currentIndex = zoomLevels.firstIndex(of: currentZoom),
            currentIndex > 0 {
             currentZoom = zoomLevels[currentIndex - 1]
@@ -624,6 +720,10 @@ struct ContentView: View {
             }
         }
         
+        // Apply restored page
+        self.currentPage = savedPage
+        self.pageInputText = "\(savedPage)"
+        
         // Add to recent files (preserve saved page if exists)
         historyManager.addRecentFile(
             path: url.path,
@@ -637,7 +737,7 @@ struct ContentView: View {
     private func openRecentFile(_ file: RecentFile) {
         let url = URL(fileURLWithPath: file.path)
         guard FileManager.default.fileExists(atPath: file.path) else {
-            errorMessage = "檔案已移動或刪除"
+            errorMessage = String(localized: "檔案已移動或刪除")
             showError = true
             historyManager.removeFile(named: file.name)
             return
@@ -652,6 +752,8 @@ struct ContentView: View {
         historyManager.updateProgress(name: fileName, currentPage: currentPage, readingMode: readingMode)
     }
 }
+
+
 
 // MARK: - Recent File Row Component
 struct RecentFileRow: View {
@@ -671,7 +773,7 @@ struct RecentFileRow: View {
                         .lineLimit(1)
                     
                     HStack {
-                        Text("第 \(file.currentPage) 頁")
+                        Text(String(localized: "第 \(file.currentPage) 頁"))
                             .font(.caption)
                             .foregroundColor(.secondary)
                         
@@ -704,9 +806,9 @@ struct RecentFileRow: View {
         if calendar.isDateInToday(date) {
             let formatter = DateFormatter()
             formatter.timeStyle = .short
-            return "今天 " + formatter.string(from: date)
+            return String(localized: "今天") + " " + formatter.string(from: date)
         } else if calendar.isDateInYesterday(date) {
-            return "昨天"
+            return String(localized: "昨天")
         } else {
             let formatter = DateFormatter()
             formatter.dateStyle = .short
@@ -723,6 +825,8 @@ struct macOS_PDFKitView: NSViewRepresentable {
     @Binding var currentPage: Int
     @Binding var pageInputText: String
     @Binding var zoomLevel: ZoomLevel
+    let onPrevious: () -> Void
+    let onNext: () -> Void
     
     func makeNSView(context: Context) -> PDFView {
         let pdfView = PDFView()
@@ -754,6 +858,17 @@ struct macOS_PDFKitView: NSViewRepresentable {
             // Don't call goToFirstPage here - let the page restoration logic handle it
         }
         
+        // Check if reading mode actually changed
+        let modeChanged = context.coordinator.previousMode != readingMode
+        if modeChanged {
+            context.coordinator.previousMode = readingMode
+            context.coordinator.isChangingMode = true
+            // Reset the flag after a brief delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                context.coordinator.isChangingMode = false
+            }
+        }
+        
         // Update reading mode
         nsView.pageBreakMargins = .zero
         
@@ -775,16 +890,21 @@ struct macOS_PDFKitView: NSViewRepresentable {
         // Update zoom level
         applyZoom(to: nsView, level: zoomLevel)
         
-        // Update current page - always jump to the desired page
+        // Only navigate to page if document changed or page number actually differs
+        // Do NOT navigate if only mode changed
         if currentPage >= 1, currentPage <= (nsView.document?.pageCount ?? 0),
            let targetPage = nsView.document?.page(at: currentPage - 1) {
-            // Force jump to target page, especially important after document load
-            if documentChanged || nsView.currentPage != targetPage {
+            // Only jump if document is new OR current page differs (not just mode change)
+            if documentChanged {
                 // Use async to ensure document is fully loaded
                 DispatchQueue.main.async {
                     nsView.go(to: targetPage)
                 }
+            } else if nsView.currentPage != targetPage && !modeChanged {
+                // Page changed but not mode - navigate normally
+                nsView.go(to: targetPage)
             }
+            // If only mode changed, don't navigate - PDFKit handles this automatically
         }
     }
     
@@ -813,9 +933,12 @@ struct macOS_PDFKitView: NSViewRepresentable {
     class Coordinator: NSObject {
         var parent: macOS_PDFKitView
         private var startPoint: NSPoint?
+        var previousMode: ReadingMode?
+        var isChangingMode = false
 
         init(parent: macOS_PDFKitView) {
             self.parent = parent
+            self.previousMode = parent.readingMode
         }
         
         @objc func pageChanged(_ notification: Notification) {
@@ -825,11 +948,16 @@ struct macOS_PDFKitView: NSViewRepresentable {
                 return
             }
             let pageIndex = document.index(for: currentPDFPage)
+            let newPage = pageIndex + 1
             
-            // Update the binding and text field
-            DispatchQueue.main.async {
-                self.parent.currentPage = pageIndex + 1
-                self.parent.pageInputText = "\(pageIndex + 1)"
+            // Only update if the page actually changed AND we're not in the middleof a mode change
+            // This prevents the notification loop during mode switches
+            if self.parent.currentPage != newPage && !self.isChangingMode {
+                // Update the binding and text field
+                DispatchQueue.main.async {
+                    self.parent.currentPage = newPage
+                    self.parent.pageInputText = "\(newPage)"
+                }
             }
         }
 
@@ -855,8 +983,10 @@ struct macOS_PDFKitView: NSViewRepresentable {
                     } else { // Swipe Right
                         if isBookMode {
                             if view.canGoToNextPage { view.goToNextPage(nil) }
+                            self.parent.onNext() // Call parent's action
                         } else {
                             if view.canGoToPreviousPage { view.goToPreviousPage(nil) }
+                            self.parent.onPrevious() // Call parent's action
                         }
                     }
                 }
