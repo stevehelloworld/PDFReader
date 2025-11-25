@@ -250,6 +250,9 @@ struct ContentView: View {
     // History management
     @StateObject private var historyManager = PDFHistoryManager.shared
     @State private var needsPageRestoration = false
+    
+    // App lifecycle
+    @Environment(\.scenePhase) private var scenePhase
 
     private var mainContent: some View {
         VStack(spacing: 0) {
@@ -455,6 +458,15 @@ struct ContentView: View {
         }
         .onChange(of: currentPage) {
             saveCurrentProgress()
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            if newPhase == .background || newPhase == .inactive {
+                // Force save when app goes to background
+                print("🚫 [應用狀態] 應用進入背景，強制儲存進度")
+                saveCurrentProgress()
+                // Force synchronize UserDefaults
+                UserDefaults.standard.synchronize()
+            }
         }
         // Keyboard shortcuts (macOS)
         #if os(macOS)
