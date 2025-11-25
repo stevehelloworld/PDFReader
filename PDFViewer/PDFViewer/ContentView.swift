@@ -611,7 +611,15 @@ struct ContentView: View {
         self.currentFileName = fileName
         
         // Try to restore reading progress
+        print("🔍 [查詢進度] 查找檔案: \(fileName)")
+        print("🔍 [查詢進度] 資料庫中的檔案數: \(historyManager.recentFiles.count)")
+        for file in historyManager.recentFiles {
+            print("🔍 [查詢進度] - \(file.name), 頁碼: \(file.currentPage)")
+        }
+        
         let savedPage = historyManager.getProgress(for: fileName)?.currentPage ?? 1
+        print("🔍 [查詢進度] 查詢結果: \(savedPage == 1 ? "未找到或第1頁" : "找到第\(savedPage)頁")")
+        
         if let progress = historyManager.getProgress(for: fileName) {
             // Restore saved progress
             if let mode = ReadingMode.allCases.first(where: { $0.rawValue == progress.readingMode }) {
