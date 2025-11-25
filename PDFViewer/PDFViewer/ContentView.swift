@@ -236,6 +236,7 @@ struct ContentView: View {
     
     // History management
     @StateObject private var historyManager = PDFHistoryManager.shared
+    @State private var needsPageRestoration = false
 
     private var mainContent: some View {
         VStack(spacing: 0) {
@@ -517,6 +518,8 @@ struct ContentView: View {
            progress.currentPage <= totalPages {
             currentPage = progress.currentPage
             pageInputText = "\(progress.currentPage)"
+            // Set flag to trigger page restoration after document loads
+            needsPageRestoration = true
         } else {
             currentPage = 1
             pageInputText = "1"
@@ -758,7 +761,10 @@ struct macOS_PDFKitView: NSViewRepresentable {
            let targetPage = nsView.document?.page(at: currentPage - 1) {
             // Force jump to target page, especially important after document load
             if documentChanged || nsView.currentPage != targetPage {
-                nsView.go(to: targetPage)
+                // Use async to ensure document is fully loaded
+                DispatchQueue.main.async {
+                    nsView.go(to: targetPage)
+                }
             }
         }
     }
@@ -907,7 +913,10 @@ struct iOS_PDFKitView: UIViewRepresentable {
            let targetPage = uiView.document?.page(at: currentPage - 1) {
             // Force jump to target page, especially important after document load
             if documentChanged || uiView.currentPage != targetPage {
-                uiView.go(to: targetPage)
+                // Use async to ensure document is fully loaded
+                DispatchQueue.main.async {
+                    uiView.go(to: targetPage)
+                }
             }
         }
     }
