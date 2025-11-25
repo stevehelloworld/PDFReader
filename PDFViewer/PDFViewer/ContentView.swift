@@ -516,11 +516,14 @@ struct ContentView: View {
         if let path = currentFilePath,
            let progress = historyManager.getProgress(for: path),
            progress.currentPage <= totalPages {
+            print("📖 [進度恢復] 檔案: \(path.split(separator: "/").last ?? "")")
+            print("📖 [進度恢復] 恢復頁碼: \(progress.currentPage) / \(totalPages)")
             currentPage = progress.currentPage
             pageInputText = "\(progress.currentPage)"
             // Set flag to trigger page restoration after document loads
             needsPageRestoration = true
         } else {
+            print("📖 [進度恢復] 沒有儲存的進度或頁碼超出範圍，從第 1 頁開始")
             currentPage = 1
             pageInputText = "1"
         }
@@ -759,11 +762,14 @@ struct macOS_PDFKitView: NSViewRepresentable {
         // Update current page - always jump to the desired page
         if currentPage >= 1, currentPage <= (nsView.document?.pageCount ?? 0),
            let targetPage = nsView.document?.page(at: currentPage - 1) {
+            print("🔄 [PDFView更新] 目標頁碼: \(currentPage), 文檔變更: \(documentChanged), 當前頁面: \(nsView.currentPage?.label ?? "nil")")
             // Force jump to target page, especially important after document load
             if documentChanged || nsView.currentPage != targetPage {
+                print("✅ [PDFView更新] 執行跳轉到第 \(currentPage) 頁")
                 // Use async to ensure document is fully loaded
                 DispatchQueue.main.async {
                     nsView.go(to: targetPage)
+                    print("✅ [PDFView更新] 跳轉完成")
                 }
             }
         }
@@ -806,6 +812,8 @@ struct macOS_PDFKitView: NSViewRepresentable {
                 return
             }
             let pageIndex = document.index(for: currentPDFPage)
+            
+            print("📄 [頁碼通知] PDFView 頁碼變更為: \(pageIndex + 1)")
             
             // Update the binding and text field
             DispatchQueue.main.async {
