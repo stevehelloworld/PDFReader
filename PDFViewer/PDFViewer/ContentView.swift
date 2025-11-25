@@ -606,6 +606,7 @@ struct ContentView: View {
         self.currentFileName = fileName
         
         // Try to restore reading progress
+        let savedPage = historyManager.getProgress(for: fileName)?.currentPage ?? 1
         if let progress = historyManager.getProgress(for: fileName) {
             // Restore saved progress
             if let mode = ReadingMode.allCases.first(where: { $0.rawValue == progress.readingMode }) {
@@ -613,11 +614,11 @@ struct ContentView: View {
             }
         }
         
-        // Add to recent files (will be updated with correct page when document loads)
+        // Add to recent files (preserve saved page if exists)
         historyManager.addRecentFile(
             path: url.path,
             name: fileName,
-            currentPage: 1,
+            currentPage: savedPage,  // Use saved page instead of always 1
             totalPages: document.pageCount,
             readingMode: readingMode
         )
