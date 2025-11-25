@@ -437,6 +437,10 @@ struct ContentView: View {
         }
         .onChange(of: readingMode) {
             updateDisplayedDocument()
+            saveCurrentProgress()
+        }
+        .onChange(of: currentPage) {
+            saveCurrentProgress()
         }
         // Keyboard shortcuts (macOS)
         #if os(macOS)
@@ -524,8 +528,7 @@ struct ContentView: View {
         guard pageNumber >= 1 && pageNumber <= totalPages else { return }
         currentPage = pageNumber
         pageInputText = "\(pageNumber)"
-        saveCurrentProgress()
-        // The actual page change will be handled by the PDFView through binding
+        // Progress is auto-saved by onChange(of: currentPage)
     }
     
     private func goToPreviousPage() {
