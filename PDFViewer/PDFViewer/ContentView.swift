@@ -143,9 +143,16 @@ class PDFHistoryManager: ObservableObject {
     }
     
     func loadRecentFiles() {
+        print("📚 [載入資料] 開始讀取 UserDefaults...")
         if let data = UserDefaults.standard.data(forKey: recentFilesKey),
            let decoded = try? JSONDecoder().decode([RecentFile].self, from: data) {
             recentFiles = decoded.sorted { $0.lastOpened > $1.lastOpened }
+            print("📚 [載入資料] 成功載入 \(recentFiles.count) 個檔案")
+            for file in recentFiles {
+                print("📚 [載入資料] - \(file.name), 頁碼: \(file.currentPage)")
+            }
+        } else {
+            print("📚 [載入資料] 未找到資料或解碼失敗")
         }
     }
     
