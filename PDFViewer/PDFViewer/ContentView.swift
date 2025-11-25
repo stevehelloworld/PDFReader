@@ -525,7 +525,7 @@ struct ContentView: View {
         // Update page info
         totalPages = doc.pageCount
         
-        // Try to restore saved page
+        // Try to restore saved page (don't reset to 1 first to avoid flashing)
         if let fileName = currentFileName,
            let progress = historyManager.getProgress(for: fileName),
            progress.currentPage <= totalPages {
@@ -535,7 +535,8 @@ struct ContentView: View {
             pageInputText = "\(progress.currentPage)"
             // Set flag to trigger page restoration after document loads
             needsPageRestoration = true
-        } else {
+        } else if currentPage == 0 || currentPage > totalPages {
+            // Only reset to 1 if current page is invalid
             print("📖 [進度恢復] 沒有儲存的進度或頁碼超出範圍，從第 1 頁開始")
             currentPage = 1
             pageInputText = "1"
