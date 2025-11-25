@@ -632,7 +632,11 @@ struct ContentView: View {
     }
     
     private func saveCurrentProgress() {
-        guard let path = currentFilePath else { return }
+        guard let path = currentFilePath else { 
+            print("💾 [儲存進度] 沒有 currentFilePath，跳過儲存")
+            return 
+        }
+        print("💾 [儲存進度] 檔案: \(path.split(separator: "/").last ?? ""), 頁碼: \(currentPage), 模式: \(readingMode.rawValue)")
         historyManager.updateProgress(path: path, currentPage: currentPage, readingMode: readingMode)
     }
 }
