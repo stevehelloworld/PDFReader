@@ -111,8 +111,8 @@ enum PDFError: LocalizedError {
 
 // MARK: - Recent Files and Reading Progress
 struct RecentFile: Codable, Identifiable {
-    let id: String // File path as ID
-    let path: String
+    let id: String // File name as ID
+    let path: String // For display and opening (may change on iOS)
     let name: String
     let lastOpened: Date
     var currentPage: Int
@@ -120,7 +120,7 @@ struct RecentFile: Codable, Identifiable {
     var readingMode: String
     
     init(path: String, name: String, currentPage: Int = 1, totalPages: Int = 0, readingMode: ReadingMode = .singlePage) {
-        self.id = path
+        self.id = name // Use filename as stable ID
         self.path = path
         self.name = name
         self.lastOpened = Date()
@@ -156,8 +156,8 @@ class PDFHistoryManager: ObservableObject {
     }
     
     func addRecentFile(path: String, name: String, currentPage: Int = 1, totalPages: Int = 0, readingMode: ReadingMode = .singlePage) {
-        // Remove existing entry if present
-        recentFiles.removeAll { $0.path == path }
+        // Remove existing entry if present (match by name, not path)
+        recentFiles.removeAll { $0.name == name }
         
         // Add new entry
         let newFile = RecentFile(path: path, name: name, currentPage: currentPage, totalPages: totalPages, readingMode: readingMode)
@@ -171,20 +171,20 @@ class PDFHistoryManager: ObservableObject {
         saveRecentFiles()
     }
     
-    func updateProgress(path: String, currentPage: Int, readingMode: ReadingMode) {
-        if let index = recentFiles.firstIndex(where: { $0.path == path }) {
+    func updateProgress(name: String, currentPage: Int, readingMode: ReadingMode) {
+        if let index = recentFiles.firstIndex(where: { $0.name == name }) {
             recentFiles[index].currentPage = currentPage
             recentFiles[index].readingMode = readingMode.rawValue
             saveRecentFiles()
         }
     }
     
-    func getProgress(for path: String) -> RecentFile? {
-        return recentFiles.first { $0.path == path }
+    func getProgress(for name: String) -> RecentFile? {
+        return recentFiles.first { $0.name == name }
     }
     
-    func removeFile(at path: String) {
-        recentFiles.removeAll { $0.path == path }
+    func removeFile(named name: String) {
+        recentFiles.removeAll { $0.name == name }
         saveRecentFiles()
     }
     
@@ -216,6 +216,7 @@ struct ContentView: View {
     @State private var originalDocument: PDFDocument?
     @State private var displayedDocument: PDFDocument?
     @State private var currentFilePath: String?
+    @State private var currentFileName: String? // Use filename as stable identifier
     
     @State private var readingMode: ReadingMode = .singlePage
     @State private var isFilePickerPresented = false
@@ -513,10 +514,10 @@ struct ContentView: View {
         totalPages = doc.pageCount
         
         // Try to restore saved page
-        if let path = currentFilePath,
-           let progress = historyManager.getProgress(for: path),
+        if let fileName = currentFileName,
+           let progress = historyManager.getProgress(for: fileName),
            progress.currentPage <= totalPages {
-            print("📖 [進度恢復] 檔案: \(path.split(separator: "/").last ?? "")")
+            print("📖 [進度恢復] 檔案: \(fileName)")
             print("📖 [進度恢復] 恢復頁碼: \(progress.currentPage) / \(totalPages)")
             currentPage = progress.currentPage
             pageInputText = "\(progress.currentPage)"
@@ -600,10 +601,10 @@ struct ContentView: View {
         
         self.originalDocument = document
         self.currentFilePath = url.path
+        self.currentFileName = fileName
         
         // Try to restore reading progress
-        let fileName = url.lastPathComponent
-        if let progress = historyManager.getProgress(for: url.path) {
+        if let progress = historyManager.getProgress(for: fileName) {
             // Restore saved progress
             if let mode = ReadingMode.allCases.first(where: { $0.rawValue == progress.readingMode }) {
                 readingMode = mode
@@ -625,19 +626,19 @@ struct ContentView: View {
         guard FileManager.default.fileExists(atPath: file.path) else {
             errorMessage = "檔案已移動或刪除"
             showError = true
-            historyManager.removeFile(at: file.path)
+            historyManager.removeFile(named: file.name)
             return
         }
         loadPDF(from: url)
     }
     
     private func saveCurrentProgress() {
-        guard let path = currentFilePath else { 
-            print("💾 [儲存進度] 沒有 currentFilePath，跳過儲存")
+        guard let fileName = currentFileName else { 
+            print("💾 [儲存進度] 沒有 currentFileName，跳過儲存")
             return 
         }
-        print("💾 [儲存進度] 檔案: \(path.split(separator: "/").last ?? ""), 頁碼: \(currentPage), 模式: \(readingMode.rawValue)")
-        historyManager.updateProgress(path: path, currentPage: currentPage, readingMode: readingMode)
+        print("💾 [儲存進度] 檔案: \(fileName), 頁碼: \(currentPage), 模式: \(readingMode.rawValue)")
+        historyManager.updateProgress(name: fileName, currentPage: currentPage, readingMode: readingMode)
     }
 }
 
