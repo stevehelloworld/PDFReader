@@ -726,9 +726,10 @@ struct macOS_PDFKitView: NSViewRepresentable {
         context.coordinator.parent = self
         
         // Update document if changed
-        if nsView.document != document {
+        let documentChanged = nsView.document != document
+        if documentChanged {
             nsView.document = document
-            nsView.goToFirstPage(nil)
+            // Don't call goToFirstPage here - let the page restoration logic handle it
         }
         
         // Update reading mode
@@ -752,11 +753,13 @@ struct macOS_PDFKitView: NSViewRepresentable {
         // Update zoom level
         applyZoom(to: nsView, level: zoomLevel)
         
-        // Update current page if it changed externally
+        // Update current page - always jump to the desired page
         if currentPage >= 1, currentPage <= (nsView.document?.pageCount ?? 0),
-           let targetPage = nsView.document?.page(at: currentPage - 1),
-           nsView.currentPage != targetPage {
-            nsView.go(to: targetPage)
+           let targetPage = nsView.document?.page(at: currentPage - 1) {
+            // Force jump to target page, especially important after document load
+            if documentChanged || nsView.currentPage != targetPage {
+                nsView.go(to: targetPage)
+            }
         }
     }
     
@@ -878,9 +881,11 @@ struct iOS_PDFKitView: UIViewRepresentable {
 
     func updateUIView(_ uiView: PDFView, context: Context) {
         context.coordinator.parent = self
-        if uiView.document != document {
+        
+        let documentChanged = uiView.document != document
+        if documentChanged {
             uiView.document = document
-            uiView.goToFirstPage(nil)
+            // Don't call goToFirstPage here - let the page restoration logic handle it
         }
         
         uiView.pageBreakMargins = .zero
@@ -897,11 +902,13 @@ struct iOS_PDFKitView: UIViewRepresentable {
         // Update zoom level
         applyZoom(to: uiView, level: zoomLevel)
         
-        // Update current page if it changed externally
+        // Update current page - always jump to the desired page
         if currentPage >= 1, currentPage <= (uiView.document?.pageCount ?? 0),
-           let targetPage = uiView.document?.page(at: currentPage - 1),
-           uiView.currentPage != targetPage {
-            uiView.go(to: targetPage)
+           let targetPage = uiView.document?.page(at: currentPage - 1) {
+            // Force jump to target page, especially important after document load
+            if documentChanged || uiView.currentPage != targetPage {
+                uiView.go(to: targetPage)
+            }
         }
     }
     
