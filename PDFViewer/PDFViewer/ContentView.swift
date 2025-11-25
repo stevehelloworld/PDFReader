@@ -152,6 +152,11 @@ class PDFHistoryManager: ObservableObject {
     func saveRecentFiles() {
         if let encoded = try? JSONEncoder().encode(recentFiles) {
             UserDefaults.standard.set(encoded, forKey: recentFilesKey)
+            UserDefaults.standard.synchronize() // Force sync to disk
+            print("💿 [資料庫] 已儲存 \(recentFiles.count) 個檔案記錄")
+            if let first = recentFiles.first {
+                print("💿 [資料庫] 最新記錄: \(first.name), 頁碼: \(first.currentPage)")
+            }
         }
     }
     
