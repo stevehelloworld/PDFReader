@@ -27,3 +27,7 @@ Carthage/Build/
 *.moved-aside
 *.swp
 *~.nib
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+*.ipa

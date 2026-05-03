@@ -45,9 +45,9 @@ extension PDFDocument {
 
 // MARK: - Reading Mode Enum (Common)
 enum ReadingMode: String, CaseIterable, Identifiable {
-    case singlePage = "單頁"
-    case twoPagesLTR = "雙頁左至右"
-    case twoPagesRTL = "雙頁右至左"
+    case singlePage = "singlePage"
+    case twoPagesLTR = "twoPagesLTR"
+    case twoPagesRTL = "twoPagesRTL"
     
     var id: String { self.rawValue }
     
@@ -173,7 +173,6 @@ class PDFHistoryManager: ObservableObject {
     func saveRecentFiles() {
         if let encoded = try? JSONEncoder().encode(recentFiles) {
             UserDefaults.standard.set(encoded, forKey: recentFilesKey)
-            UserDefaults.standard.synchronize() // Force sync to disk
         }
     }
     
@@ -253,15 +252,13 @@ struct ContentView: View {
     
     // Zoom control
     @State private var currentZoom: ZoomLevel = .fitPage
-    @State private var customZoomFactor: CGFloat = 1.0
     
     // Error handling
     @State private var errorMessage: String?
     @State private var showError = false
     
     // History management
-    @StateObject private var historyManager = PDFHistoryManager.shared
-    @State private var needsPageRestoration = false
+    @ObservedObject private var historyManager = PDFHistoryManager.shared
     
     // App lifecycle
     @Environment(\.scenePhase) private var scenePhase
@@ -476,7 +473,6 @@ struct ContentView: View {
                     }
                 }
                 .toolbar(isToolbarHidden ? .hidden : .automatic, for: .windowToolbar)
-                .focusedSceneValue(\.isInApp, true)
 #elseif os(iOS)
             NavigationView {
                 mainContent
@@ -501,7 +497,7 @@ struct ContentView: View {
                 Text(errorMessage)
             }
         }
-        .onChange(of: originalDocument) {
+        .onChange(of: originalDocument) { _, _ in
             updateDisplayedDocument()
         }
         .onChange(of: readingMode) { oldMode, newMode in
@@ -517,58 +513,33 @@ struct ContentView: View {
                 saveCurrentProgress()
             }
         }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
                 // Force save when app goes to background
                 saveCurrentProgress()
-                // Force synchronize UserDefaults
-                UserDefaults.standard.synchronize()
             }
         }
-        // Keyboard shortcuts (macOS)
         #if os(macOS)
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button(String(localized: "開啟檔案")) {
-                    openFile()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-            }
-            
-            
-            CommandMenu(String(localized: "縮放")) {
-                Button(String(localized: "放大")) {
-                    zoomIn()
-                }
-                .keyboardShortcut("+", modifiers: .command)
-                .disabled(originalDocument == nil)
-                
-                Button(String(localized: "縮小")) {
-                    zoomOut()
-                }
-                .keyboardShortcut("-", modifiers: .command)
-                .disabled(originalDocument == nil)
-                
-                Button(String(localized: "實際大小")) {
-                    currentZoom = .percent100
-                }
-                .keyboardShortcut("0", modifiers: .command)
-                .disabled(originalDocument == nil)
-                
-                Divider()
-                
-                Button(String(localized: "適應頁面")) {
-                    currentZoom = .fitPage
-                }
-                .disabled(originalDocument == nil)
-                
-                Button(String(localized: "適應寬度")) {
-                    currentZoom = .fitWidth
-                }
-                .disabled(originalDocument == nil)
-            }
+        .onReceive(NotificationCenter.default.publisher(for: .openPDFFile)) { _ in
+            openFile()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .zoomIn)) { _ in
+            zoomIn()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .zoomOut)) { _ in
+            zoomOut()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .zoomActualSize)) { _ in
+            currentZoom = .percent100
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .zoomFitPage)) { _ in
+            currentZoom = .fitPage
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .zoomFitWidth)) { _ in
+            currentZoom = .fitWidth
         }
         #endif
+
     }
     
     private func updateDisplayedDocument() {
@@ -600,17 +571,7 @@ struct ContentView: View {
             totalPages = newTotalPages
         }
         
-        // Try to restore saved page (don't reset to 1 first to avoid flashing)
-        // Only do this once per document load, not on every mode change
-        if needsPageRestoration {
-            if let fileName = currentFileName,
-               let progress = historyManager.getProgress(for: fileName),
-               progress.currentPage <= totalPages {
-                currentPage = progress.currentPage
-                pageInputText = "\(progress.currentPage)"
-            }
-            needsPageRestoration = false
-        } else if currentPage == 0 || currentPage > totalPages {
+        if currentPage == 0 || currentPage > totalPages {
             // Only reset to 1 if current page is invalid
             currentPage = 1
             pageInputText = "1"
@@ -950,7 +911,7 @@ struct macOS_PDFKitView: NSViewRepresentable {
             let pageIndex = document.index(for: currentPDFPage)
             let newPage = pageIndex + 1
             
-            // Only update if the page actually changed AND we're not in the middleof a mode change
+            // Only update if the page actually changed AND we're not in the middle of a mode change
             // This prevents the notification loop during mode switches
             if self.parent.currentPage != newPage && !self.isChangingMode {
                 // Update the binding and text field
@@ -983,12 +944,11 @@ struct macOS_PDFKitView: NSViewRepresentable {
                     } else { // Swipe Right
                         if isBookMode {
                             if view.canGoToNextPage { view.goToNextPage(nil) }
-                            self.parent.onNext() // Call parent's action
                         } else {
                             if view.canGoToPreviousPage { view.goToPreviousPage(nil) }
-                            self.parent.onPrevious() // Call parent's action
                         }
                     }
+                    // Page sync is handled by the PDFViewPageChanged notification
                 }
                 startPoint = nil
             default: break
