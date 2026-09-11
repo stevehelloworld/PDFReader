@@ -1,57 +1,540 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>隱私權政策 - PDFViewer</title>
+    <meta name="description" content="PDFViewer 隱私權政策。本應用程式不收集、不儲存、也不傳輸任何使用者的個人資料。">
+    <link rel="alternate" hreflang="zh-Hant" href="?lang=zh-TW">
+    <link rel="alternate" hreflang="zh-Hans" href="?lang=zh-CN">
+    <link rel="alternate" hreflang="en" href="?lang=en">
+    <link rel="alternate" hreflang="ja" href="?lang=ja">
+    <link rel="alternate" hreflang="ko" href="?lang=ko">
+    <link rel="alternate" hreflang="th" href="?lang=th">
+    <link rel="alternate" hreflang="x-default" href="?lang=zh-TW">
     <style>
+        :root {
+            --bg: #f5f5f7;
+            --surface: #ffffff;
+            --ink: #1d1d1f;
+            --muted: #6e6e73;
+            --line: #d2d2d7;
+            --accent: #1d1d1f;
+            --accent-ink: #ffffff;
+            --focus: #0071e3;
+            --chip: #ffffff;
+            --chip-hover: #f5f5f7;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #000000;
+                --surface: #1c1c1e;
+                --ink: #f5f5f7;
+                --muted: #a1a1a6;
+                --line: #3a3a3c;
+                --accent: #f5f5f7;
+                --accent-ink: #1d1d1f;
+                --focus: #2997ff;
+                --chip: #2c2c2e;
+                --chip-hover: #3a3a3c;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            color-scheme: light dark;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 800px;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+                "PingFang TC", "PingFang SC", "Hiragino Sans", "Noto Sans CJK TC",
+                "Noto Sans Thai", Thonburi, Helvetica, Arial, sans-serif;
+            line-height: 1.7;
+            color: var(--ink);
+            background: var(--bg);
+            padding: 24px 16px 64px;
+        }
+
+        html[lang="th"] body,
+        html[lang="th"] {
+            line-height: 1.85;
+        }
+
+        .page {
+            max-width: 44rem;
             margin: 0 auto;
-            padding: 20px;
         }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px 24px;
+            margin-bottom: 32px;
+        }
+
+        .brand {
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            color: var(--ink);
+        }
+
+        .lang-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .lang-nav button {
+            appearance: none;
+            min-height: 44px;
+            padding: 8px 14px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: var(--chip);
+            color: var(--ink);
+            font: inherit;
+            font-size: 14px;
+            line-height: 1.2;
+            cursor: pointer;
+            touch-action: manipulation;
+            transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+        }
+
+        .lang-nav button:hover {
+            background: var(--chip-hover);
+        }
+
+        .lang-nav button[aria-pressed="true"] {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-ink);
+            font-weight: 600;
+        }
+
+        .lang-nav button:focus-visible {
+            outline: 3px solid var(--focus);
+            outline-offset: 2px;
+        }
+
+        article {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            padding: 32px 28px 40px;
+        }
+
         h1 {
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
+            margin: 0 0 8px;
+            font-size: clamp(1.75rem, 4vw, 2.125rem);
+            line-height: 1.25;
+            letter-spacing: -0.03em;
+            text-wrap: balance;
+            border-bottom: 0;
+            padding-bottom: 0;
         }
-        h2 {
-            margin-top: 30px;
-        }
+
         .date {
-            color: #666;
-            font-style: italic;
+            margin: 0 0 24px;
+            color: var(--muted);
+            font-style: normal;
+            font-size: 0.95rem;
+        }
+
+        h2 {
+            margin: 32px 0 12px;
+            font-size: 1.2rem;
+            letter-spacing: -0.02em;
+            text-wrap: balance;
+        }
+
+        p, ul {
+            max-width: 70ch;
+        }
+
+        p {
+            margin: 0 0 14px;
+            text-wrap: pretty;
+        }
+
+        ul {
+            margin: 0 0 14px;
+            padding-left: 1.25rem;
+        }
+
+        li + li {
+            margin-top: 6px;
+        }
+
+        a {
+            color: var(--focus);
+            text-underline-offset: 3px;
+            overflow-wrap: anywhere;
+        }
+
+        a:focus-visible {
+            outline: 3px solid var(--focus);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 16px 12px 48px;
+            }
+
+            article {
+                padding: 24px 18px 32px;
+                border-radius: 16px;
+            }
+
+            .lang-nav {
+                width: 100%;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .lang-nav button {
+                transition: none;
+            }
         }
     </style>
 </head>
 <body>
-    <h1>隱私權政策 (Privacy Policy)</h1>
-    <p class="date">最後更新日期：2025 年 11 月 25 日</p>
+    <div class="page">
+        <div class="toolbar">
+            <div class="brand">PDFViewer</div>
+            <nav class="lang-nav" id="lang-nav" aria-label="選擇語言"></nav>
+        </div>
+        <article id="content" aria-live="polite">
+            <h1>隱私權政策</h1>
+            <p class="date">最後更新日期：2025 年 11 月 25 日</p>
+            <p>感謝您使用 <strong>PDFViewer</strong>（以下簡稱「本應用程式」）。本應用程式由 Steve Yeh 開發。我們非常重視您的隱私權，因此制定了本隱私權政策來說明我們如何處理您的資訊。</p>
+            <h2>1. 資料收集與使用</h2>
+            <p><strong>本應用程式不收集、不儲存、也不傳輸任何使用者的個人資料。</strong></p>
+            <p>本應用程式是一個完全離線運行的 PDF 閱讀工具。所有的 PDF 檔案處理（包括開啟、閱讀、渲染）皆在您的裝置本機上完成。我們不會將您的文件上傳至任何伺服器。</p>
+            <h2>2. 檔案存取權限</h2>
+            <p>為了提供閱讀功能，本應用程式需要存取您選擇開啟的 PDF 檔案。此權限僅用於：</p>
+            <ul>
+                <li>顯示文件內容</li>
+                <li>記錄閱讀進度（頁碼）</li>
+            </ul>
+            <p>這些資訊僅儲存在您的裝置本機（UserDefaults）中，不會與開發者或第三方共享。</p>
+            <h2>3. 第三方服務</h2>
+            <p>本應用程式不包含任何第三方分析工具（如 Google Analytics、Firebase）或廣告服務，因此不會有第三方收集您的使用數據。</p>
+            <h2>4. 政策變更</h2>
+            <p>我們可能會不時更新我們的隱私權政策。建議您定期查看本頁面以獲取任何更改。這些更改在發佈到本頁面後立即生效。</p>
+            <h2>5. 聯絡我們</h2>
+            <p>如果您對本隱私權政策有任何疑問或建議，請透過 GitHub Issues 聯絡我們：<br>
+            <a href="https://github.com/stevehelloworld/PDFReader/issues">https://github.com/stevehelloworld/PDFReader/issues</a></p>
+        </article>
+    </div>
+    <script>
+        (function () {
+            var STORAGE_KEY = "pdfviewer-privacy-lang";
+            var CONTACT_URL = "https://github.com/stevehelloworld/PDFReader/issues";
+            var LANGS = [
+                { id: "zh-TW", label: "繁體中文", htmlLang: "zh-Hant" },
+                { id: "zh-CN", label: "简体中文", htmlLang: "zh-Hans" },
+                { id: "en", label: "English", htmlLang: "en" },
+                { id: "ja", label: "日本語", htmlLang: "ja" },
+                { id: "ko", label: "한국어", htmlLang: "ko" },
+                { id: "th", label: "ไทย", htmlLang: "th" }
+            ];
+            var LANG_IDS = LANGS.map(function (item) { return item.id; });
 
-    <p>感謝您使用 <strong>PDFViewer</strong>（以下簡稱「本應用程式」）。本應用程式由 Steve Yeh 開發。我們非常重視您的隱私權，因此制定了本隱私權政策來說明我們如何處理您的資訊。</p>
+            var I18N = {
+                "zh-TW": {
+                    title: "隱私權政策 - PDFViewer",
+                    description: "PDFViewer 隱私權政策。本應用程式不收集、不儲存、也不傳輸任何使用者的個人資料。",
+                    langNav: "選擇語言",
+                    heading: "隱私權政策",
+                    date: "最後更新日期：2025 年 11 月 25 日",
+                    intro: "感謝您使用 <strong>PDFViewer</strong>（以下簡稱「本應用程式」）。本應用程式由 Steve Yeh 開發。我們非常重視您的隱私權，因此制定了本隱私權政策來說明我們如何處理您的資訊。",
+                    sections: [
+                        {
+                            heading: "1. 資料收集與使用",
+                            html: "<p><strong>本應用程式不收集、不儲存、也不傳輸任何使用者的個人資料。</strong></p><p>本應用程式是一個完全離線運行的 PDF 閱讀工具。所有的 PDF 檔案處理（包括開啟、閱讀、渲染）皆在您的裝置本機上完成。我們不會將您的文件上傳至任何伺服器。</p>"
+                        },
+                        {
+                            heading: "2. 檔案存取權限",
+                            html: "<p>為了提供閱讀功能，本應用程式需要存取您選擇開啟的 PDF 檔案。此權限僅用於：</p><ul><li>顯示文件內容</li><li>記錄閱讀進度（頁碼）</li></ul><p>這些資訊僅儲存在您的裝置本機（UserDefaults）中，不會與開發者或第三方共享。</p>"
+                        },
+                        {
+                            heading: "3. 第三方服務",
+                            html: "<p>本應用程式不包含任何第三方分析工具（如 Google Analytics、Firebase）或廣告服務，因此不會有第三方收集您的使用數據。</p>"
+                        },
+                        {
+                            heading: "4. 政策變更",
+                            html: "<p>我們可能會不時更新我們的隱私權政策。建議您定期查看本頁面以獲取任何更改。這些更改在發佈到本頁面後立即生效。</p>"
+                        },
+                        {
+                            heading: "5. 聯絡我們",
+                            html: "<p>如果您對本隱私權政策有任何疑問或建議，請透過 GitHub Issues 聯絡我們：<br><a href=\"" + CONTACT_URL + "\">" + CONTACT_URL + "</a></p>"
+                        }
+                    ]
+                },
+                "zh-CN": {
+                    title: "隐私政策 - PDFViewer",
+                    description: "PDFViewer 隐私政策。本应用程序不收集、不存储、也不传输任何用户的个人数据。",
+                    langNav: "选择语言",
+                    heading: "隐私政策",
+                    date: "最后更新日期：2025 年 11 月 25 日",
+                    intro: "感谢您使用 <strong>PDFViewer</strong>（以下简称“本应用程序”）。本应用程序由 Steve Yeh 开发。我们非常重视您的隐私权，因此制定了本隐私政策来说明我们如何处理您的信息。",
+                    sections: [
+                        {
+                            heading: "1. 数据收集与使用",
+                            html: "<p><strong>本应用程序不收集、不存储、也不传输任何用户的个人数据。</strong></p><p>本应用程序是一个完全离线运行的 PDF 阅读工具。所有 PDF 文件处理（包括打开、阅读、渲染）均在您的设备本地完成。我们不会将您的文档上传至任何服务器。</p>"
+                        },
+                        {
+                            heading: "2. 文件访问权限",
+                            html: "<p>为了提供阅读功能，本应用程序需要访问您选择打开的 PDF 文件。此权限仅用于：</p><ul><li>显示文档内容</li><li>记录阅读进度（页码）</li></ul><p>这些信息仅存储在您的设备本地（UserDefaults）中，不会与开发者或第三方共享。</p>"
+                        },
+                        {
+                            heading: "3. 第三方服务",
+                            html: "<p>本应用程序不包含任何第三方分析工具（如 Google Analytics、Firebase）或广告服务，因此不会有第三方收集您的使用数据。</p>"
+                        },
+                        {
+                            heading: "4. 政策变更",
+                            html: "<p>我们可能会不时更新我们的隐私政策。建议您定期查看本页面以了解任何更改。这些更改在发布到本页面后立即生效。</p>"
+                        },
+                        {
+                            heading: "5. 联系我们",
+                            html: "<p>如果您对本隐私政策有任何疑问或建议，请通过 GitHub Issues 联系我们：<br><a href=\"" + CONTACT_URL + "\">" + CONTACT_URL + "</a></p>"
+                        }
+                    ]
+                },
+                en: {
+                    title: "Privacy Policy - PDFViewer",
+                    description: "PDFViewer Privacy Policy. The app does not collect, store, or transmit any personal data.",
+                    langNav: "Choose language",
+                    heading: "Privacy Policy",
+                    date: "Last updated: November 25, 2025",
+                    intro: "Thank you for using <strong>PDFViewer</strong> (the “App”). The App is developed by Steve Yeh. We take your privacy seriously and have created this Privacy Policy to explain how we handle your information.",
+                    sections: [
+                        {
+                            heading: "1. Data Collection and Use",
+                            html: "<p><strong>The App does not collect, store, or transmit any personal data.</strong></p><p>The App is a fully offline PDF reading tool. All PDF processing (including opening, reading, and rendering) happens locally on your device. We do not upload your documents to any server.</p>"
+                        },
+                        {
+                            heading: "2. File Access",
+                            html: "<p>To provide reading features, the App needs access to the PDF files you choose to open. This permission is used only to:</p><ul><li>Display document content</li><li>Record reading progress (page number)</li></ul><p>This information is stored only on your device (UserDefaults) and is not shared with the developer or any third party.</p>"
+                        },
+                        {
+                            heading: "3. Third-Party Services",
+                            html: "<p>The App does not include any third-party analytics tools (such as Google Analytics or Firebase) or advertising services, so no third party collects your usage data.</p>"
+                        },
+                        {
+                            heading: "4. Changes to This Policy",
+                            html: "<p>We may update this Privacy Policy from time to time. We recommend reviewing this page periodically for any changes. Changes take effect immediately when they are posted on this page.</p>"
+                        },
+                        {
+                            heading: "5. Contact Us",
+                            html: "<p>If you have any questions or suggestions about this Privacy Policy, please contact us via GitHub Issues:<br><a href=\"" + CONTACT_URL + "\">" + CONTACT_URL + "</a></p>"
+                        }
+                    ]
+                },
+                ja: {
+                    title: "プライバシーポリシー - PDFViewer",
+                    description: "PDFViewer のプライバシーポリシー。本アプリはユーザーの個人データを収集、保存、送信しません。",
+                    langNav: "言語を選択",
+                    heading: "プライバシーポリシー",
+                    date: "最終更新日：2025年11月25日",
+                    intro: "<strong>PDFViewer</strong>（以下「本アプリ」）をご利用いただきありがとうございます。本アプリは Steve Yeh によって開発されています。お客様のプライバシーを大切に考えており、情報の取り扱いについて本プライバシーポリシーで説明します。",
+                    sections: [
+                        {
+                            heading: "1. データの収集と利用",
+                            html: "<p><strong>本アプリは、ユーザーの個人データを収集、保存、送信しません。</strong></p><p>本アプリは完全にオフラインで動作する PDF 閲覧ツールです。PDF ファイルの処理（開く、閲覧、レンダリングを含む）はすべてお客様の端末上で行われます。お客様の文書をサーバーにアップロードすることはありません。</p>"
+                        },
+                        {
+                            heading: "2. ファイルアクセス",
+                            html: "<p>閲覧機能を提供するため、本アプリはお客様が開く PDF ファイルへのアクセスが必要です。この権限は次の目的にのみ使用されます：</p><ul><li>文書内容の表示</li><li>閲覧進捗（ページ番号）の記録</li></ul><p>これらの情報はお客様の端末内（UserDefaults）にのみ保存され、開発者や第三者と共有されることはありません。</p>"
+                        },
+                        {
+                            heading: "3. 第三者サービス",
+                            html: "<p>本アプリには、Google Analytics や Firebase などの第三者分析ツール、または広告サービスは含まれていません。したがって、第三者がお客様の利用データを収集することはありません。</p>"
+                        },
+                        {
+                            heading: "4. 本ポリシーの変更",
+                            html: "<p>本プライバシーポリシーは随時更新される場合があります。変更がないか確認するため、本ページを定期的にご確認ください。変更は本ページに掲載された時点で直ちに効力を生じます。</p>"
+                        },
+                        {
+                            heading: "5. お問い合わせ",
+                            html: "<p>本プライバシーポリシーについてご質問やご提案がございましたら、GitHub Issues までご連絡ください：<br><a href=\"" + CONTACT_URL + "\">" + CONTACT_URL + "</a></p>"
+                        }
+                    ]
+                },
+                ko: {
+                    title: "개인정보 처리방침 - PDFViewer",
+                    description: "PDFViewer 개인정보 처리방침. 본 앱은 사용자의 개인정보를 수집, 저장, 전송하지 않습니다.",
+                    langNav: "언어 선택",
+                    heading: "개인정보 처리방침",
+                    date: "최종 업데이트: 2025년 11월 25일",
+                    intro: "<strong>PDFViewer</strong>(이하 “본 앱”)을 이용해 주셔서 감사합니다. 본 앱은 Steve Yeh가 개발했습니다. 저희는 귀하의 개인정보를 중요하게 생각하며, 정보를 어떻게 처리하는지 설명하기 위해 본 개인정보 처리방침을 마련했습니다.",
+                    sections: [
+                        {
+                            heading: "1. 데이터 수집 및 이용",
+                            html: "<p><strong>본 앱은 사용자의 개인정보를 수집, 저장, 전송하지 않습니다.</strong></p><p>본 앱은 완전히 오프라인으로 작동하는 PDF 열람 도구입니다. 모든 PDF 파일 처리(열기, 읽기, 렌더링 포함)는 귀하의 기기에서 로컬로 수행됩니다. 귀하의 문서를 어떠한 서버에도 업로드하지 않습니다.</p>"
+                        },
+                        {
+                            heading: "2. 파일 접근 권한",
+                            html: "<p>열람 기능을 제공하기 위해 본 앱은 귀하가 선택한 PDF 파일에 접근해야 합니다. 이 권한은 다음 용도로만 사용됩니다:</p><ul><li>문서 내용 표시</li><li>읽기 진행 상황(페이지 번호) 기록</li></ul><p>이 정보는 귀하의 기기에만 저장되며(UserDefaults) 개발자 또는 제3자와 공유되지 않습니다.</p>"
+                        },
+                        {
+                            heading: "3. 제3자 서비스",
+                            html: "<p>본 앱에는 Google Analytics, Firebase와 같은 제3자 분석 도구 또는 광고 서비스가 포함되어 있지 않으므로, 제3자가 귀하의 사용 데이터를 수집하지 않습니다.</p>"
+                        },
+                        {
+                            heading: "4. 방침 변경",
+                            html: "<p>본 개인정보 처리방침은 수시로 업데이트될 수 있습니다. 변경 사항을 확인하기 위해 이 페이지를 정기적으로 검토하시기를 권장합니다. 변경 사항은 이 페이지에 게시된 즉시 효력이 발생합니다.</p>"
+                        },
+                        {
+                            heading: "5. 문의하기",
+                            html: "<p>본 개인정보 처리방침에 대한 질문이나 제안이 있으시면 GitHub Issues를 통해 문의해 주세요:<br><a href=\"" + CONTACT_URL + "\">" + CONTACT_URL + "</a></p>"
+                        }
+                    ]
+                },
+                th: {
+                    title: "นโยบายความเป็นส่วนตัว - PDFViewer",
+                    description: "นโยบายความเป็นส่วนตัวของ PDFViewer แอปพลิเคชันนี้ไม่เก็บรวบรวม ไม่จัดเก็บ และไม่ส่งข้อมูลส่วนบุคคลของผู้ใช้",
+                    langNav: "เลือกภาษา",
+                    heading: "นโยบายความเป็นส่วนตัว",
+                    date: "อัปเดตล่าสุด: 25 พฤศจิกายน 2025",
+                    intro: "ขอบคุณที่ใช้ <strong>PDFViewer</strong> (ต่อไปนี้เรียกว่า “แอปพลิเคชันนี้”) แอปพลิเคชันนี้พัฒนาโดย Steve Yeh เราให้ความสำคัญกับความเป็นส่วนตัวของคุณเป็นอย่างยิ่ง จึงจัดทำนโยบายความเป็นส่วนตัวนี้ขึ้นเพื่ออธิบายวิธีที่เราจัดการข้อมูลของคุณ",
+                    sections: [
+                        {
+                            heading: "1. การเก็บรวบรวมและใช้ข้อมูล",
+                            html: "<p><strong>แอปพลิเคชันนี้ไม่เก็บรวบรวม ไม่จัดเก็บ และไม่ส่งข้อมูลส่วนบุคคลของผู้ใช้ใด ๆ</strong></p><p>แอปพลิเคชันนี้เป็นเครื่องมืออ่าน PDF ที่ทำงานแบบออฟไลน์โดยสมบูรณ์ การประมวลผลไฟล์ PDF ทั้งหมด (รวมถึงการเปิด การอ่าน และการเรนเดอร์) ดำเนินการบนอุปกรณ์ของคุณเท่านั้น เราจะไม่อัปโหลดเอกสารของคุณไปยังเซิร์ฟเวอร์ใด ๆ</p>"
+                        },
+                        {
+                            heading: "2. สิทธิ์การเข้าถึงไฟล์",
+                            html: "<p>เพื่อให้บริการการอ่าน แอปพลิเคชันนี้จำเป็นต้องเข้าถึงไฟล์ PDF ที่คุณเลือกเปิด สิทธิ์นี้ใช้เพื่อ:</p><ul><li>แสดงเนื้อหาเอกสาร</li><li>บันทึกความคืบหน้าการอ่าน (หมายเลขหน้า)</li></ul><p>ข้อมูลเหล่านี้จัดเก็บเฉพาะบนอุปกรณ์ของคุณ (UserDefaults) และจะไม่แบ่งปันกับนักพัฒนาหรือบุคคลที่สาม</p>"
+                        },
+                        {
+                            heading: "3. บริการของบุคคลที่สาม",
+                            html: "<p>แอปพลิเคชันนี้ไม่มีเครื่องมือวิเคราะห์ของบุคคลที่สาม (เช่น Google Analytics, Firebase) หรือบริการโฆษณา ดังนั้นจะไม่มีบุคคลที่สามเก็บข้อมูลการใช้งานของคุณ</p>"
+                        },
+                        {
+                            heading: "4. การเปลี่ยนแปลงนโยบาย",
+                            html: "<p>เราอาจอัปเดตนโยบายความเป็นส่วนตัวเป็นครั้งคราว แนะนำให้คุณตรวจสอบหน้านี้เป็นประจำเพื่อดูการเปลี่ยนแปลงใด ๆ การเปลี่ยนแปลงจะมีผลทันทีหลังจากเผยแพร่บนหน้านี้</p>"
+                        },
+                        {
+                            heading: "5. ติดต่อเรา",
+                            html: "<p>หากคุณมีคำถามหรือข้อเสนอแนะเกี่ยวกับนโยบายความเป็นส่วนตัวนี้ โปรดติดต่อเราผ่าน GitHub Issues:<br><a href=\"" + CONTACT_URL + "\">" + CONTACT_URL + "</a></p>"
+                        }
+                    ]
+                }
+            };
 
-    <h2>1. 資料收集與使用 (Data Collection and Use)</h2>
-    <p><strong>本應用程式不收集、不儲存、也不傳輸任何使用者的個人資料。</strong></p>
-    <p>本應用程式是一個完全離線運行的 PDF 閱讀工具。所有的 PDF 檔案處理（包括開啟、閱讀、渲染）皆在您的裝置本機上完成。我們不會將您的文件上傳至任何伺服器。</p>
+            function isSupported(id) {
+                return LANG_IDS.indexOf(id) !== -1;
+            }
 
-    <h2>2. 檔案存取權限 (File Access)</h2>
-    <p>為了提供閱讀功能，本應用程式需要存取您選擇開啟的 PDF 檔案。此權限僅用於：</p>
-    <ul>
-        <li>顯示文件內容</li>
-        <li>記錄閱讀進度（頁碼）</li>
-    </ul>
-    <p>這些資訊僅儲存在您的裝置本機（UserDefaults）中，不會與開發者或第三方共享。</p>
+            function matchBrowserLang() {
+                var candidates = [];
+                if (navigator.languages && navigator.languages.length) {
+                    candidates = candidates.concat(Array.prototype.slice.call(navigator.languages));
+                }
+                if (navigator.language) {
+                    candidates.push(navigator.language);
+                }
 
-    <h2>3. 第三方服務 (Third-Party Services)</h2>
-    <p>本應用程式不包含任何第三方分析工具（如 Google Analytics、Firebase）或廣告服務，因此不會有第三方收集您的使用數據。</p>
+                for (var i = 0; i < candidates.length; i++) {
+                    var raw = String(candidates[i] || "").toLowerCase().replace(/_/g, "-");
+                    if (raw.indexOf("zh") === 0) {
+                        if (raw.indexOf("hant") !== -1 || raw.indexOf("tw") !== -1 || raw.indexOf("hk") !== -1 || raw.indexOf("mo") !== -1) {
+                            return "zh-TW";
+                        }
+                        if (raw.indexOf("hans") !== -1 || raw.indexOf("cn") !== -1 || raw.indexOf("sg") !== -1) {
+                            return "zh-CN";
+                        }
+                        return "zh-TW";
+                    }
+                    if (raw.indexOf("ja") === 0) return "ja";
+                    if (raw.indexOf("ko") === 0) return "ko";
+                    if (raw.indexOf("th") === 0) return "th";
+                    if (raw.indexOf("en") === 0) return "en";
+                }
+                return "zh-TW";
+            }
 
-    <h2>4. 政策變更 (Changes to This Policy)</h2>
-    <p>我們可能會不時更新我們的隱私權政策。建議您定期查看本頁面以獲取任何更改。這些更改在發佈到本頁面後立即生效。</p>
+            function detectLang() {
+                var params = new URLSearchParams(window.location.search);
+                var fromQuery = params.get("lang");
+                if (fromQuery && isSupported(fromQuery)) {
+                    return fromQuery;
+                }
+                try {
+                    var stored = localStorage.getItem(STORAGE_KEY);
+                    if (stored && isSupported(stored)) {
+                        return stored;
+                    }
+                } catch (err) {}
+                return matchBrowserLang();
+            }
 
-    <h2>5. 聯絡我們 (Contact Us)</h2>
-    <p>如果您對本隱私權政策有任何疑問或建議，請透過 GitHub Issues 聯絡我們：<br>
-    <a href="https://github.com/stevehelloworld/PDFReader/issues">https://github.com/stevehelloworld/PDFReader/issues</a></p>
+            function persistLang(id) {
+                try {
+                    localStorage.setItem(STORAGE_KEY, id);
+                } catch (err) {}
+                var url = new URL(window.location.href);
+                url.searchParams.set("lang", id);
+                history.replaceState(null, "", url);
+            }
+
+            function renderContent(id) {
+                var copy = I18N[id];
+                var meta = LANGS.filter(function (item) { return item.id === id; })[0];
+                document.documentElement.lang = meta.htmlLang;
+                document.title = copy.title;
+
+                var description = document.querySelector('meta[name="description"]');
+                if (description) {
+                    description.setAttribute("content", copy.description);
+                }
+
+                var nav = document.getElementById("lang-nav");
+                nav.setAttribute("aria-label", copy.langNav);
+                nav.innerHTML = "";
+                LANGS.forEach(function (lang) {
+                    var button = document.createElement("button");
+                    button.type = "button";
+                    button.textContent = lang.label;
+                    button.setAttribute("lang", lang.htmlLang);
+                    button.setAttribute("aria-pressed", lang.id === id ? "true" : "false");
+                    button.addEventListener("click", function () {
+                        if (lang.id !== id) {
+                            persistLang(lang.id);
+                            renderContent(lang.id);
+                        }
+                    });
+                    nav.appendChild(button);
+                });
+
+                var article = document.getElementById("content");
+                var parts = [
+                    "<h1>" + copy.heading + "</h1>",
+                    '<p class="date">' + copy.date + "</p>",
+                    "<p>" + copy.intro + "</p>"
+                ];
+                copy.sections.forEach(function (section) {
+                    parts.push("<h2>" + section.heading + "</h2>");
+                    parts.push(section.html);
+                });
+                article.innerHTML = parts.join("");
+            }
+
+            var initialLang = detectLang();
+            persistLang(initialLang);
+            renderContent(initialLang);
+        })();
+    </script>
 </body>
 </html>
