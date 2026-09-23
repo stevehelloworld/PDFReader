@@ -1,1126 +1,925 @@
 import SwiftUI
 import PDFKit
+import UniformTypeIdentifiers
 
-// MARK: - PDF Document Reordering Logic
-extension PDFDocument {
-    /// Creates a new PDFDocument with pages reordered for a simulated RTL book view.
-    /// The new order will be [1, 3, 2, 5, 4, ...]. When displayed in a standard LTR book view,
-    /// this creates the visual effect of an RTL layout.
-    func reorderedForRTL() -> PDFDocument {
-        let newDocument = PDFDocument()
-        let originalPageCount = self.pageCount
-
-        guard originalPageCount > 0 else {
-            return newDocument
-        }
-
-        // The first page (cover) is always displayed alone on the right.
-        if let firstPage = self.page(at: 0)?.copy() as? PDFPage {
-            newDocument.insert(firstPage, at: 0)
-        }
-
-        // Process the rest of the pages in swapped pairs.
-        var i = 1
-        while i < originalPageCount {
-            if i + 1 < originalPageCount {
-                // This is a pair of pages, e.g., pages 2 and 3 (at indices 1 and 2).
-                // We get them and insert them in reverse order.
-                if let rightPage = self.page(at: i + 1)?.copy() as? PDFPage,
-                   let leftPage = self.page(at: i)?.copy() as? PDFPage {
-                    newDocument.insert(rightPage, at: newDocument.pageCount)
-                    newDocument.insert(leftPage, at: newDocument.pageCount)
-                }
-            } else {
-                // This is the last, unpaired page.
-                if let lastPage = self.page(at: i)?.copy() as? PDFPage {
-                    newDocument.insert(lastPage, at: newDocument.pageCount)
-                }
-            }
-            i += 2
-        }
-        return newDocument
-    }
-}
-
-
-// MARK: - Reading Mode Enum (Common)
-enum ReadingMode: String, CaseIterable, Identifiable {
-    case singlePage = "singlePage"
-    case twoPagesLTR = "twoPagesLTR"
-    case twoPagesRTL = "twoPagesRTL"
-    
-    var id: String { self.rawValue }
-    
-    var label: String {
-        switch self {
-        case .singlePage: return String(localized: "單頁")
-        case .twoPagesLTR: return String(localized: "雙頁左至右")
-        case .twoPagesRTL: return String(localized: "雙頁右至左")
-        }
-    }
-    
-    var icon: String {
-        switch self {
-        case .singlePage: return "doc.text"
-        case .twoPagesLTR: return "book"
-        case .twoPagesRTL: return "book.closed"
-        }
-    }
-    
-    var description: String {
-        switch self {
-        case .singlePage: return String(localized: "單頁模式")
-        case .twoPagesLTR: return String(localized: "雙頁模式（左至右）")
-        case .twoPagesRTL: return String(localized: "雙頁模式（右至左）")
-        }
-    }
-}
-
-// MARK: - Zoom Level Enum
-enum ZoomLevel: String, CaseIterable, Identifiable {
-    case fitPage
-    case fitWidth
-    case percent50
-    case percent75
-    case percent100
-    case percent125
-    case percent150
-    case percent200
-    
-    var displayName: String {
-        switch self {
-        case .fitPage: return String(localized: "適應頁面")
-        case .fitWidth: return String(localized: "適應寬度")
-        case .percent50: return "50%"
-        case .percent75: return "75%"
-        case .percent100: return "100%"
-        case .percent125: return "125%"
-        case .percent150: return "150%"
-        case .percent200: return "200%"
-        }
-    }
-    
-    var id: String { self.displayName }
-    
-    var scaleFactor: CGFloat? {
-        switch self {
-        case .fitPage, .fitWidth: return nil
-        case .percent50: return 0.5
-        case .percent75: return 0.75
-        case .percent100: return 1.0
-        case .percent125: return 1.25
-        case .percent150: return 1.5
-        case .percent200: return 2.0
-        }
-    }
-}
-
-// MARK: - PDF Error Handling
-enum PDFError: LocalizedError {
-    case fileNotFound
-    case invalidPDF
-    case cannotRead
-    
-    var errorDescription: String? {
-        switch self {
-        case .fileNotFound: return String(localized: "找不到 PDF 檔案")
-        case .invalidPDF: return String(localized: "無效的 PDF 檔案或檔案已損壞")
-        case .cannotRead: return String(localized: "無法讀取 PDF 檔案，請檢查檔案權限")
-        }
-    }
-}
-
-// MARK: - Recent Files and Reading Progress
-struct RecentFile: Codable, Identifiable {
-    let id: String // File name as ID
-    let path: String // For display and opening (may change on iOS)
-    let name: String
-    let lastOpened: Date
-    var currentPage: Int
-    var totalPages: Int
-    var readingMode: String
-    
-    init(path: String, name: String, currentPage: Int = 1, totalPages: Int = 0, readingMode: ReadingMode = .singlePage) {
-        self.id = name // Use filename as stable ID
-        self.path = path
-        self.name = name
-        self.lastOpened = Date()
-        self.currentPage = currentPage
-        self.totalPages = totalPages
-        self.readingMode = readingMode.rawValue
-    }
-}
-
-class PDFHistoryManager: ObservableObject {
-    static let shared = PDFHistoryManager()
-    
-    @Published var recentFiles: [RecentFile] = []
-    
-    private let maxRecentFiles = 10
-    private let recentFilesKey = "recentPDFFiles"
-    
-    init() {
-        loadRecentFiles()
-    }
-    
-    func loadRecentFiles() {
-        if let data = UserDefaults.standard.data(forKey: recentFilesKey),
-           let decoded = try? JSONDecoder().decode([RecentFile].self, from: data) {
-            recentFiles = decoded.sorted { $0.lastOpened > $1.lastOpened }
-        }
-    }
-    
-    func saveRecentFiles() {
-        if let encoded = try? JSONEncoder().encode(recentFiles) {
-            UserDefaults.standard.set(encoded, forKey: recentFilesKey)
-        }
-    }
-    
-    func addRecentFile(path: String, name: String, currentPage: Int = 1, totalPages: Int = 0, readingMode: ReadingMode = .singlePage) {
-        // Remove existing entry if present (match by name, not path)
-        recentFiles.removeAll { $0.name == name }
-        
-        // Add new entry
-        let newFile = RecentFile(path: path, name: name, currentPage: currentPage, totalPages: totalPages, readingMode: readingMode)
-        recentFiles.insert(newFile, at: 0)
-        
-        // Keep only the most recent files
-        if recentFiles.count > maxRecentFiles {
-            recentFiles = Array(recentFiles.prefix(maxRecentFiles))
-        }
-        
-        saveRecentFiles()
-    }
-    
-    func updateProgress(name: String, currentPage: Int, readingMode: ReadingMode) {
-        if let index = recentFiles.firstIndex(where: { $0.name == name }) {
-            recentFiles[index].currentPage = currentPage
-            recentFiles[index].readingMode = readingMode.rawValue
-            saveRecentFiles()
-        }
-    }
-    
-    func getProgress(for name: String) -> RecentFile? {
-        return recentFiles.first { $0.name == name }
-    }
-    
-    func removeFile(named name: String) {
-        recentFiles.removeAll { $0.name == name }
-        saveRecentFiles()
-    }
-    
-    func clearAll() {
-        recentFiles.removeAll()
-        saveRecentFiles()
-    }
-}
-
-// MARK: - PDF View (Platform-Agnostic Wrapper)
-struct PDFKitView: View {
-    let document: PDFDocument
-    @Binding var readingMode: ReadingMode
-    @Binding var currentPage: Int
-    @Binding var pageInputText: String
-    @Binding var zoomLevel: ZoomLevel
-    let onPrevious: () -> Void
-    let onNext: () -> Void
-
-    var body: some View {
 #if os(macOS)
-        macOS_PDFKitView(document: document, readingMode: $readingMode, currentPage: $currentPage, pageInputText: $pageInputText, zoomLevel: $zoomLevel, onPrevious: onPrevious, onNext: onNext)
-#elseif os(iOS)
-        iOS_PDFKitView(document: document, readingMode: $readingMode, currentPage: $currentPage, pageInputText: $pageInputText, zoomLevel: $zoomLevel)
+import AppKit
 #endif
-    }
-}
 
-// MARK: - Main ContentView
 struct ContentView: View {
-    @State private var originalDocument: PDFDocument?
-    @State private var displayedDocument: PDFDocument?
-    @State private var currentFilePath: String?
-    @State private var currentFileName: String? // Use filename as stable identifier
-    
+    #if os(macOS)
+    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    #endif
+    // Document session
+    @State private var document: PDFDocument?
+    @State private var currentFileURL: URL?
+    @State private var currentFileName: String?
+    @State private var currentFileID: String?
+    @State private var currentBookmark: Data?
+
+    // Reader state
     @State private var readingMode: ReadingMode = .singlePage
-    @State private var isFilePickerPresented = false
-    @State private var isToolbarHidden = false
-    
-    // Page navigation
-    @State private var currentPage: Int = 1
-    @State private var totalPages: Int = 0
-    @State private var pageInputText: String = ""
-    
-    // Zoom control
+    @State private var isContinuous = false
+    @State private var currentPage = 1
+    @State private var totalPages = 0
+    @State private var pageInputText = ""
     @State private var currentZoom: ZoomLevel = .fitPage
-    
-    // Error handling
+    @State private var appearance: ReadingAppearance = .automatic
+
+    // Chrome
+    @State private var isToolbarHidden = false
+    @State private var showSidebar = false
+    @State private var sidebarTab: SidebarTab = .thumbnails
+    @State private var showSearch = false
+    @State private var showScrubber = true
+    @State private var isFilePickerPresented = false
+
+    // Search
+    @State private var searchQuery = ""
+    @State private var searchResults: [PDFSelection] = []
+    @State private var selectedResultIndex = 0
+    @State private var isSearching = false
+    @State private var searchProgress = 0
+    @State private var searchPageCount = 0
+    @State private var pendingSelection: PDFSelection?
+
+    // Loading / errors
+    @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showError = false
-    
-    // History management
-    @ObservedObject private var historyManager = PDFHistoryManager.shared
-    
-    // App lifecycle
-    @Environment(\.scenePhase) private var scenePhase
 
-    private var mainContent: some View {
-        VStack(spacing: 0) {
-            if let document = displayedDocument {
-                // No GeometryReader, no overlay, just the PDFView
-                PDFKitView(
+    // Progress debounce
+    @State private var saveTask: Task<Void, Never>?
+    @State private var searchTask: Task<Void, Never>?
+    @State private var activeLoadRequest: UUID?
+
+    @ObservedObject private var historyManager = PDFHistoryManager.shared
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    var body: some View {
+        Group {
+            #if os(macOS)
+            macOSRoot
+            #else
+            iOSRoot
+            #endif
+        }
+        .alert(String(localized: "錯誤"), isPresented: $showError) {
+            Button(String(localized: "確定"), role: .cancel) {}
+            if document == nil {
+                Button(String(localized: "開啟檔案")) { openFile() }
+            }
+        } message: {
+            if let errorMessage {
+                Text(errorMessage)
+            }
+        }
+        .onChange(of: currentPage) { oldPage, newPage in
+            guard oldPage != newPage else { return }
+            pageInputText = "\(newPage)"
+            scheduleSaveProgress()
+        }
+        .onChange(of: readingMode) { _, _ in scheduleSaveProgress() }
+        .onChange(of: isContinuous) { _, _ in scheduleSaveProgress() }
+        .onChange(of: appearance) { _, _ in scheduleSaveProgress() }
+        .onChange(of: currentZoom) { _, _ in scheduleSaveProgress() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background || phase == .inactive {
+                saveTask?.cancel()
+                saveCurrentProgress()
+            }
+        }
+        .onDisappear {
+            saveTask?.cancel()
+            cancelSearch()
+            activeLoadRequest = nil
+            saveCurrentProgress()
+            if let currentFileURL {
+                SecurityScopedURLResolver.stopAccess(currentFileURL)
+            }
+        }
+        .modifier(OpenURLModifier { url in
+            Task { await loadPDF(from: url) }
+        })
+        #if os(macOS)
+        .focusedSceneValue(\.readerCommands, ReaderCommands(
+            openFile: openFile,
+            previousPage: goToPreviousPage,
+            nextPage: goToNextPage,
+            toggleSidebar: { withAnimation { showSidebar.toggle() } },
+            toggleSearch: { withAnimation { showSearch.toggle() } },
+            toggleContinuous: { isContinuous.toggle() },
+            zoomIn: zoomIn,
+            zoomOut: zoomOut,
+            zoomActualSize: { currentZoom = .percent100 },
+            zoomFitPage: { currentZoom = .fitPage },
+            zoomFitWidth: { currentZoom = .fitWidth },
+            hasDocument: document != nil
+        ))
+        #endif
+    }
+
+    // MARK: - macOS layout
+
+    #if os(macOS)
+    private var macOSRoot: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            if let document {
+                DocumentSidebarView(
                     document: document,
-                    readingMode: $readingMode,
                     currentPage: $currentPage,
-                    pageInputText: $pageInputText,
-                    zoomLevel: $currentZoom,
-                    onPrevious: goToPreviousPage,
-                    onNext: goToNextPage
+                    selectedTab: $sidebarTab,
+                    onSelectPage: goToPage
                 )
-                .onTapGesture {
-#if os(iOS)
-                    withAnimation { isToolbarHidden.toggle() }
-#endif
-                }
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
             } else {
-                emptyStateView
+                Color.clear.frame(width: 0)
+            }
+        } detail: {
+            readerContainer
+                .frame(minWidth: 480, minHeight: 360)
+                .navigationTitle(currentFileName ?? "ComicPDFReader")
+                .toolbar { macToolbar }
+                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .windowToolbar)
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
+                    isToolbarHidden = true
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
+                    isToolbarHidden = false
+                }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .onChange(of: showSidebar) { _, visible in
+            withAnimation {
+                columnVisibility = visible && document != nil ? .all : .detailOnly
+            }
+        }
+        .onChange(of: document != nil) { _, hasDoc in
+            if !hasDoc {
+                showSidebar = false
+                columnVisibility = .detailOnly
+            }
+        }
+        .sheet(isPresented: $showSearch) {
+            if let document {
+                searchSheet(document: document)
+                    .frame(minWidth: 360, minHeight: 420)
             }
         }
     }
-    
-    private var emptyStateView: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 60))
-                .foregroundColor(.secondary)
-            
-            Text(String(localized: "請開啟一個 PDF 檔案"))
-                .font(.title)
-                .foregroundColor(.secondary)
-            
-            if !historyManager.recentFiles.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(String(localized: "最近開啟"))
-                        .font(.headline)
-                        .padding(.top, 20)
-                    
-                    ForEach(historyManager.recentFiles.prefix(5)) { file in
-                        RecentFileRow(file: file) {
-                            openRecentFile(file)
+
+    @ToolbarContentBuilder
+    private var macToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigation) {
+            if document != nil {
+                Button {
+                    withAnimation { showSidebar.toggle() }
+                } label: {
+                    Label(String(localized: "側邊欄"), systemImage: "sidebar.left")
+                }
+                .help(String(localized: "縮圖與目錄"))
+
+                pageNavigationControls
+            }
+        }
+
+        ToolbarItemGroup(placement: .principal) {
+            if document != nil {
+                readingModePicker
+                continuousToggle
+            }
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            if document != nil {
+                Button {
+                    showSearch = true
+                } label: {
+                    Label(String(localized: "搜尋"), systemImage: "magnifyingglass")
+                }
+                .help(String(localized: "搜尋 PDF"))
+
+                appearanceMenu
+                zoomControls
+
+                Button(action: openFile) {
+                    Label(String(localized: "開啟"), systemImage: "doc.badge.plus")
+                }
+                .help(String(localized: "選擇要開啟的 PDF 檔案"))
+            } else {
+                Button(action: openFile) {
+                    Label(String(localized: "開啟檔案"), systemImage: "doc.badge.plus")
+                }
+            }
+        }
+    }
+    #endif
+
+    // MARK: - iOS layout
+
+    #if os(iOS)
+    private var iOSRoot: some View {
+        NavigationStack {
+            readerContainer
+                .navigationTitle(currentFileName ?? "ComicPDFReader")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { iOSToolbar }
+                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .navigationBar)
+                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .bottomBar)
+                .safeAreaInset(edge: .bottom) {
+                    if document != nil, !isToolbarHidden, horizontalSizeClass == .compact {
+                        iPhoneBottomBar
+                    }
+                }
+        }
+        .sheet(isPresented: $isFilePickerPresented) {
+            DocumentPicker { url in
+                Task { await loadPDF(from: url) }
+            }
+        }
+        .sheet(isPresented: $showSearch) {
+            if let document {
+                NavigationStack {
+                    searchSheet(document: document)
+                        .navigationTitle(String(localized: "搜尋"))
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button(String(localized: "完成")) { showSearch = false }
+                            }
+                        }
+                }
+            }
+        }
+        .sheet(isPresented: $showSidebar) {
+            if let document {
+                NavigationStack {
+                    DocumentSidebarView(
+                        document: document,
+                        currentPage: $currentPage,
+                        selectedTab: $sidebarTab,
+                        onSelectPage: { page in
+                            goToPage(page)
+                            showSidebar = false
+                        }
+                    )
+                    .navigationTitle(String(localized: "瀏覽"))
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button(String(localized: "完成")) { showSidebar = false }
                         }
                     }
                 }
-                .frame(maxWidth: 400)
-                .padding()
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var iOSToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            if document != nil {
+                Button {
+                    showSidebar = true
+                } label: {
+                    Label(String(localized: "側邊欄"), systemImage: "sidebar.left")
+                }
+            }
+        }
+
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            if document != nil {
+                if horizontalSizeClass != .compact {
+                    pageNavigationControls
+                    readingModePicker
+                }
+                Button { showSearch = true } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                Menu {
+                    readingModeMenuContent
+                    Toggle(String(localized: "連續捲動"), isOn: $isContinuous)
+                    Divider()
+                    appearanceMenuContent
+                    Divider()
+                    zoomMenuContent
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+            Button(action: openFile) {
+                Image(systemName: "doc.badge.plus")
+            }
+            .accessibilityLabel(String(localized: "開啟檔案"))
+        }
+    }
+
+    private var iPhoneBottomBar: some View {
+        HStack(spacing: 16) {
+            Button(action: goToPreviousPage) {
+                Image(systemName: "chevron.left")
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(currentPage <= 1)
+            .accessibilityLabel(String(localized: "上一頁"))
+
+            HStack(spacing: 4) {
+                TextField(String(localized: "頁碼"), text: $pageInputText)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 48)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { submitPageInput() }
+
+                Text("/ \(totalPages)")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Button(action: goToNextPage) {
+                Image(systemName: "chevron.right")
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(currentPage >= totalPages)
+            .accessibilityLabel(String(localized: "下一頁"))
+
+            Spacer(minLength: 0)
+
+            Picker("", selection: $readingMode) {
+                ForEach(ReadingMode.allCases) { mode in
+                    Label(mode.label, systemImage: mode.icon)
+                        .labelStyle(.iconOnly)
+                        .tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 160)
+            .accessibilityLabel(String(localized: "閱讀模式"))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+    #endif
+
+    // MARK: - Shared reader container
+
+    private var readerContainer: some View {
+        ZStack {
+            if let document {
+                readerStack(document: document)
+            } else {
+                EmptyStateView(
+                    historyManager: historyManager,
+                    isLoading: isLoading,
+                    onOpen: openFile,
+                    onOpenRecent: { file in Task { await openRecent(file) } },
+                    onRemoveRecent: { historyManager.removeFile(id: $0.id) },
+                    onClearRecents: { historyManager.clearAll() }
+                )
+            }
+
+            if isLoading, document != nil {
+                LoadingOverlay(message: String(localized: "正在載入…"))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #if os(macOS)
+        .onDrop(of: [UTType.fileURL, UTType.pdf], isTargeted: nil) { providers in
+            handleDrop(providers: providers)
+        }
+        #endif
+        .focusable()
+        .onKeyPress(.leftArrow) {
+            goToPreviousPage()
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            goToNextPage()
+            return .handled
+        }
+        .onKeyPress(.space) {
+            goToNextPage()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            if showSearch { showSearch = false; return .handled }
+            if showSidebar { showSidebar = false; return .handled }
+            return .ignored
+        }
     }
 
-    @ViewBuilder
-    private var navigationToolbarItems: some View {
-        HStack(spacing: 8) {
+    private func readerStack(document: PDFDocument) -> some View {
+        VStack(spacing: 0) {
+            ZStack {
+                PDFKitView(
+                    document: document,
+                    readingMode: $readingMode,
+                    isContinuous: $isContinuous,
+                    currentPage: $currentPage,
+                    pageInputText: $pageInputText,
+                    zoomLevel: $currentZoom,
+                    appearance: $appearance,
+                    pendingSelection: pendingSelection,
+                    onSelectionConsumed: { pendingSelection = nil },
+                    onPrevious: goToPreviousPage,
+                    onNext: goToNextPage
+                )
+                .compositingGroup()
+                .overlay { AppearanceFilterOverlay(appearance: appearance) }
+
+                if !isContinuous {
+                    EdgeTapOverlay(
+                        isRTL: readingMode.isRTL,
+                        onPrevious: goToPreviousPage,
+                        onNext: goToNextPage
+                    )
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                withAnimation {
+                    isToolbarHidden.toggle()
+                    showScrubber.toggle()
+                }
+            }
+
+            if showScrubber, !isToolbarHidden {
+                PageScrubber(currentPage: $currentPage, totalPages: totalPages, onSeek: goToPage)
+            }
+        }
+    }
+
+    private func searchSheet(document: PDFDocument) -> some View {
+        SearchPanel(
+            document: document,
+            query: $searchQuery,
+            results: $searchResults,
+            selectedResultIndex: $selectedResultIndex,
+            isSearching: isSearching,
+            searchProgress: searchProgress,
+            searchPageCount: searchPageCount,
+            onSelect: { selection in
+                pendingSelection = selection
+                if let page = selection.pages.first {
+                    goToPage(document.index(for: page) + 1)
+                }
+            },
+            onQueryChanged: searchQueryDidChange,
+            onSearch: { performSearch(in: document) }
+        )
+    }
+
+    // MARK: - Toolbar building blocks
+
+    private var pageNavigationControls: some View {
+        HStack(spacing: 6) {
             Button(action: goToPreviousPage) {
                 Image(systemName: "chevron.left")
             }
             .disabled(currentPage <= 1)
             .help(String(localized: "上一頁"))
-            
+            .accessibilityLabel(String(localized: "上一頁"))
+
             HStack(spacing: 4) {
                 TextField(String(localized: "頁碼"), text: $pageInputText)
-                    .frame(width: 40)
-                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 44)
                     .multilineTextAlignment(.center)
-                    .onSubmit {
-                        if let pageNum = Int(pageInputText), pageNum != 0 {
-                            goToPage(pageNum)
-                        }
-                    }
-                
+                    #if os(macOS)
+                    .textFieldStyle(.roundedBorder)
+                    #endif
+                    .onSubmit { submitPageInput() }
+
                 Text("/")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                 Text("\(totalPages)")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
-            
+
             Button(action: goToNextPage) {
                 Image(systemName: "chevron.right")
             }
             .disabled(currentPage >= totalPages)
             .help(String(localized: "下一頁"))
+            .accessibilityLabel(String(localized: "下一頁"))
         }
     }
-    
-    @ViewBuilder
-    private var readingModeToolbarItems: some View {
-        HStack(spacing: 0) {
+
+    private var readingModePicker: some View {
+        Picker(String(localized: "閱讀模式"), selection: $readingMode) {
             ForEach(ReadingMode.allCases) { mode in
-                readingModeButton(for: mode)
-                
-                if mode != ReadingMode.allCases.last {
-                    Divider().frame(height: 20)
-                }
+                Label(mode.label, systemImage: mode.icon).tag(mode)
             }
         }
-        #if os(macOS)
-        .background(Color(nsColor: .controlBackgroundColor))
-        #else
-        .background(Color(uiColor: .secondarySystemBackground))
-        #endif
-        .cornerRadius(6)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-        )
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 280)
+        .help(String(localized: "閱讀模式"))
     }
-    
-    private func readingModeButton(for mode: ReadingMode) -> some View {
-        Button(action: {
-            readingMode = mode
-        }) {
-            VStack(spacing: 2) {
-                Image(systemName: mode.icon)
-                    .font(.system(size: 16))
-                Text(mode.label)
-                    .font(.caption2)
-            }
-            .frame(height: 40)
-            .padding(.horizontal, 12)
-            .contentShape(Rectangle())
+
+    private var continuousToggle: some View {
+        Toggle(isOn: $isContinuous) {
+            Image(systemName: "rectangle.stack")
         }
-        .buttonStyle(.borderless)
-        .background(readingMode == mode ? Color.accentColor.opacity(0.15) : Color.clear)
-        .foregroundColor(readingMode == mode ? .accentColor : .primary)
-        .help(mode.description)
+        .toggleStyle(.button)
+        .help(String(localized: "連續捲動"))
+        .accessibilityLabel(String(localized: "連續捲動"))
     }
-    
+
+    private var appearanceMenu: some View {
+        Menu {
+            appearanceMenuContent
+        } label: {
+            Label(appearance.label, systemImage: appearance.icon)
+        }
+        .help(String(localized: "外觀"))
+    }
+
     @ViewBuilder
-    private var combinedToolbarItems: some View {
-        if originalDocument != nil {
-            navigationToolbarItems
-            Divider()
-            readingModeToolbarItems
-            Divider()
-            zoomToolbarItems
-        } else {
-            Button(action: { openFile() }) {
-                Label(String(localized: "開啟檔案"), systemImage: "doc.badge.plus")
+    private var appearanceMenuContent: some View {
+        ForEach(ReadingAppearance.allCases) { mode in
+            Button {
+                appearance = mode
+            } label: {
+                Label(mode.label, systemImage: mode.icon)
             }
         }
     }
-    
+
+    private var zoomControls: some View {
+        HStack(spacing: 4) {
+            Button(action: zoomOut) {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .help(String(localized: "縮小"))
+            .accessibilityLabel(String(localized: "縮小"))
+
+            Picker(String(localized: "縮放"), selection: $currentZoom) {
+                ForEach(ZoomLevel.allCases) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .frame(width: 96)
+            .help(String(localized: "縮放比例"))
+
+            Button(action: zoomIn) {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .help(String(localized: "放大"))
+            .accessibilityLabel(String(localized: "放大"))
+        }
+    }
+
     @ViewBuilder
-    private var zoomToolbarItems: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 0) {
-                Button(action: zoomOut) {
-                    Image(systemName: "minus.magnifyingglass")
-                }
-                .help(String(localized: "縮小"))
-                
-                Picker(String(localized: "縮放"), selection: $currentZoom) {
-                    ForEach(ZoomLevel.allCases) { level in
-                        Text(level.displayName).tag(level)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 85)
-                .help(String(localized: "縮放比例"))
-                
-                Button(action: zoomIn) {
-                    Image(systemName: "plus.magnifyingglass")
-                }
-                .help(String(localized: "放大"))
+    private var readingModeMenuContent: some View {
+        ForEach(ReadingMode.allCases) { mode in
+            Button {
+                readingMode = mode
+            } label: {
+                Label(mode.label, systemImage: mode.icon)
             }
-            
-            Divider()
-                .frame(height: 20)
-            
-            Button(action: { openFile() }) {
-                Label(String(localized: "開啟"), systemImage: "doc.badge.plus")
-            }
-            .help(String(localized: "選擇要開啟的 PDF 檔案"))
         }
     }
 
-    var body: some View {
-        Group {
-#if os(macOS)
-            mainContent
-                .frame(minWidth: 400, minHeight: 300)
-                .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in isToolbarHidden = true }
-                .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in isToolbarHidden = false }
-                .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        if originalDocument != nil {
-                            navigationToolbarItems
-                        }
-                    }
-                    
-                    ToolbarItem(placement: .principal) {
-                        if originalDocument != nil {
-                            readingModeToolbarItems
-                        }
-                    }
-                    
-                    ToolbarItem(placement: .primaryAction) {
-                        if originalDocument != nil {
-                            zoomToolbarItems
-                        } else {
-                            Button(action: { openFile() }) {
-                                Label(String(localized: "開啟檔案"), systemImage: "doc.badge.plus")
-                            }
-                        }
-                    }
-                }
-                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .windowToolbar)
-#elseif os(iOS)
-            NavigationView {
-                mainContent
-                    .navigationBarTitleDisplayMode(.inline)
-                    .sheet(isPresented: $isFilePickerPresented) {
-                        DocumentPicker { url in
-                            loadPDF(from: url)
-                        }
-                    }
-                    .toolbar {
-                        ToolbarItemGroup(placement: .primaryAction) { combinedToolbarItems }
-                    }
-                    .toolbar(isToolbarHidden ? .hidden : .automatic, for: .navigationBar)
-            }
-            .navigationViewStyle(.stack)
-#endif
+    @ViewBuilder
+    private var zoomMenuContent: some View {
+        ForEach(ZoomLevel.allCases) { level in
+            Button(level.displayName) { currentZoom = level }
         }
-        .alert(String(localized: "錯誤"), isPresented: $showError) {
-            Button(String(localized: "確定"), role: .cancel) { }
-        } message: {
-            if let errorMessage = errorMessage {
-                Text(errorMessage)
-            }
-        }
-        .onChange(of: originalDocument) { _, _ in
-            updateDisplayedDocument()
-        }
-        .onChange(of: readingMode) { oldMode, newMode in
-            // Only update if mode actually changed to prevent cycles
-            if oldMode != newMode {
-                updateDisplayedDocument()
-                // Don't call saveCurrentProgress here - it's handled by currentPage onChange
-            }
-        }
-        .onChange(of: currentPage) { oldPage, newPage in
-            // Only save if page actually changed
-            if oldPage != newPage {
-                saveCurrentProgress()
-            }
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .background || newPhase == .inactive {
-                // Force save when app goes to background
-                saveCurrentProgress()
-            }
-        }
-        #if os(macOS)
-        .onReceive(NotificationCenter.default.publisher(for: .openPDFFile)) { _ in
-            openFile()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .zoomIn)) { _ in
-            zoomIn()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .zoomOut)) { _ in
-            zoomOut()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .zoomActualSize)) { _ in
-            currentZoom = .percent100
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .zoomFitPage)) { _ in
-            currentZoom = .fitPage
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .zoomFitWidth)) { _ in
-            currentZoom = .fitWidth
-        }
-        #endif
-
     }
-    
-    private func updateDisplayedDocument() {
-        guard let doc = originalDocument else {
-            displayedDocument = nil
-            totalPages = 0
-            currentPage = 1
-            pageInputText = ""
-            return
-        }
 
-        #if os(iOS)
-        if readingMode == .twoPagesRTL {
-            // On iOS, we create a reordered document for RTL book mode.
-            displayedDocument = doc.reorderedForRTL()
+    // MARK: - Navigation
+
+    private func goToPage(_ pageNumber: Int) {
+        guard pageNumber >= 1, pageNumber <= totalPages else { return }
+        currentPage = pageNumber
+        pageInputText = "\(pageNumber)"
+    }
+
+    private func goToPreviousPage() {
+        if currentPage > 1 { goToPage(currentPage - 1) }
+    }
+
+    private func goToNextPage() {
+        if currentPage < totalPages { goToPage(currentPage + 1) }
+    }
+
+    private func submitPageInput() {
+        if let pageNum = Int(pageInputText), (1...totalPages).contains(pageNum) {
+            goToPage(pageNum)
         } else {
-            displayedDocument = doc
-        }
-        #else
-        //On macOS, PDFKit handles RTL natively, so we always use the original document.
-        displayedDocument = doc
-        #endif
-        
-        // Update page info
-        let newTotalPages = doc.pageCount
-        
-        // Only update if total pages actually changed to avoid triggering onChange
-        if totalPages != newTotalPages {
-            totalPages = newTotalPages
-        }
-        
-        if currentPage == 0 || currentPage > totalPages {
-            // Only reset to 1 if current page is invalid
-            currentPage = 1
-            pageInputText = "1"
-        } else {
-            // Update pageInputText to match currentPage without changing currentPage
             pageInputText = "\(currentPage)"
         }
     }
-    
-    // MARK: - Page Navigation Methods
-    private func goToPage(_ pageNumber: Int) {
-        guard pageNumber >= 1 && pageNumber <= totalPages else { return }
-        currentPage = pageNumber
-        pageInputText = "\(pageNumber)"
-        // Progress is auto-saved by onChange(of: currentPage)
-    }
-    
-    private func goToPreviousPage() {
-        if currentPage > 1 {
-            goToPage(currentPage - 1)
-        }
-    }
-    
-    private func goToNextPage() {
-        if currentPage < totalPages {
-            goToPage(currentPage + 1)
-        }
-    }
-    
-    // MARK: - Zoom Methods
+
+    // MARK: - Zoom
+
     private func zoomIn() {
-        let zoomLevels = ZoomLevel.allCases.filter { $0.scaleFactor != nil }
-        
-        // If currently on fitPage or fitWidth, switch to 100% first
+        let levels = ZoomLevel.percentageLevels
         if currentZoom == .fitPage || currentZoom == .fitWidth {
             currentZoom = .percent100
             return
         }
-        
-        // Otherwise cycle through percentage levels
-        if let currentIndex = zoomLevels.firstIndex(of: currentZoom),
-           currentIndex < zoomLevels.count - 1 {
-            currentZoom = zoomLevels[currentIndex + 1]
+        if let idx = levels.firstIndex(of: currentZoom), idx < levels.count - 1 {
+            currentZoom = levels[idx + 1]
         }
     }
-    
+
     private func zoomOut() {
-        let zoomLevels = ZoomLevel.allCases.filter { $0.scaleFactor != nil }
-        
-        // If currently on fitPage or fitWidth, switch to 100% first
+        let levels = ZoomLevel.percentageLevels
         if currentZoom == .fitPage || currentZoom == .fitWidth {
             currentZoom = .percent100
             return
         }
-        
-        // Otherwise cycle through percentage levels
-        if let currentIndex = zoomLevels.firstIndex(of: currentZoom),
-           currentIndex > 0 {
-            currentZoom = zoomLevels[currentIndex - 1]
+        if let idx = levels.firstIndex(of: currentZoom), idx > 0 {
+            currentZoom = levels[idx - 1]
         }
     }
-    
-    // MARK: - File Opening with Error Handling
+
+    // MARK: - Search
+
+    private func performSearch(in document: PDFDocument) {
+        cancelSearch()
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else {
+            searchResults = []
+            return
+        }
+
+        searchResults = []
+        selectedResultIndex = 0
+        searchProgress = 0
+        searchPageCount = document.pageCount
+        isSearching = true
+
+        // Keep PDFKit on the main actor, but search one page at a time and yield between
+        // pages so large documents don't monopolize the UI for one full-document call.
+        searchTask = Task { @MainActor in
+            var selections: [PDFSelection] = []
+            let options: NSString.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+
+            for pageIndex in 0..<document.pageCount {
+                guard !Task.isCancelled,
+                      self.document === document,
+                      self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q
+                else { return }
+
+                if let page = document.page(at: pageIndex), let pageString = page.string {
+                    let pageText = pageString as NSString
+                    var cursor = 0
+
+                    while cursor < pageText.length {
+                        let remainingRange = NSRange(location: cursor, length: pageText.length - cursor)
+                        let match = pageText.range(of: q, options: options, range: remainingRange)
+                        guard match.location != NSNotFound else { break }
+                        if let selection = page.selection(for: match) {
+                            selections.append(selection)
+                        }
+                        cursor = NSMaxRange(match)
+                    }
+                }
+
+                if (pageIndex + 1).isMultiple(of: 8) || pageIndex + 1 == document.pageCount {
+                    searchProgress = pageIndex + 1
+                }
+                await Task.yield()
+            }
+
+            guard !Task.isCancelled,
+                  self.document === document,
+                  searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q
+            else { return }
+            searchResults = selections
+            selectedResultIndex = 0
+            isSearching = false
+            if let first = selections.first {
+                pendingSelection = first
+                if let page = first.pages.first {
+                    goToPage(document.index(for: page) + 1)
+                }
+            }
+            searchTask = nil
+        }
+    }
+
+    private func searchQueryDidChange() {
+        cancelSearch()
+        searchResults = []
+        selectedResultIndex = 0
+    }
+
+    private func cancelSearch() {
+        searchTask?.cancel()
+        searchTask = nil
+        isSearching = false
+        searchProgress = 0
+        searchPageCount = 0
+    }
+
+    // MARK: - File open / load
+
     private func openFile() {
-#if os(macOS)
+        #if os(macOS)
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
-            loadPDF(from: url)
+            Task { await loadPDF(from: url) }
         }
-#elseif os(iOS)
+        #elseif os(iOS)
         isFilePickerPresented = true
-#endif
+        #endif
     }
-    
-    private func loadPDF(from url: URL) {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            errorMessage = PDFError.fileNotFound.errorDescription
-            showError = true
-            return
+
+    private func openRecent(_ file: RecentFile) async {
+        let requestID = UUID()
+        activeLoadRequest = requestID
+        isLoading = true
+        defer {
+            if activeLoadRequest == requestID {
+                isLoading = false
+                activeLoadRequest = nil
+            }
         }
-        
-        guard let document = PDFDocument(url: url) else {
-            errorMessage = PDFError.invalidPDF.errorDescription
-            showError = true
-            return
+        do {
+            let loaded = try await PDFDocumentLoader.load(recent: file)
+            guard activeLoadRequest == requestID else {
+                SecurityScopedURLResolver.stopAccess(loaded.url)
+                return
+            }
+            replaceCurrentDocument(with: loaded, restoring: file)
+        } catch {
+            guard activeLoadRequest == requestID else { return }
+            presentError(error)
+            if let pdfError = error as? PDFError, case .fileNotFound = pdfError {
+                historyManager.removeFile(id: file.id)
+            }
         }
-        
-        guard document.pageCount > 0 else {
-            errorMessage = PDFError.invalidPDF.errorDescription
-            showError = true
-            return
+    }
+
+    private func loadPDF(from url: URL, existingBookmark: Data? = nil) async {
+        let requestID = UUID()
+        activeLoadRequest = requestID
+        isLoading = true
+        defer {
+            if activeLoadRequest == requestID {
+                isLoading = false
+                activeLoadRequest = nil
+            }
         }
-        
-        let fileName = url.lastPathComponent
-        
-        self.originalDocument = document
-        self.currentFilePath = url.path
-        self.currentFileName = fileName
-        
-        // Try to restore reading progress
-        let savedPage = historyManager.getProgress(for: fileName)?.currentPage ?? 1
-        if let progress = historyManager.getProgress(for: fileName) {
-            // Restore saved progress
-            if let mode = ReadingMode.allCases.first(where: { $0.rawValue == progress.readingMode }) {
+
+        do {
+            let loaded = try await PDFDocumentLoader.load(from: url, existingBookmark: existingBookmark)
+            guard activeLoadRequest == requestID else {
+                SecurityScopedURLResolver.stopAccess(loaded.url)
+                return
+            }
+            let saved = historyManager.getProgress(id: loaded.fileID, matching: loaded.url)
+            replaceCurrentDocument(with: loaded, restoring: saved)
+        } catch {
+            guard activeLoadRequest == requestID else { return }
+            presentError(error)
+        }
+    }
+
+    private func replaceCurrentDocument(with loaded: LoadedPDF, restoring progress: RecentFile?) {
+        cancelSearch()
+        searchResults = []
+        pendingSelection = nil
+        saveTask?.cancel()
+        saveCurrentProgress()
+
+        let previousURL = currentFileURL
+        applyLoaded(loaded, restoring: progress)
+        if let previousURL {
+            SecurityScopedURLResolver.stopAccess(previousURL)
+        }
+    }
+
+    private func applyLoaded(_ loaded: LoadedPDF, restoring progress: RecentFile?) {
+        document = loaded.document
+        currentFileURL = loaded.url
+        currentFileName = loaded.fileName
+        currentFileID = loaded.fileID
+        currentBookmark = loaded.bookmarkData
+        totalPages = loaded.document.pageCount
+
+        if let progress {
+            if let mode = ReadingMode(rawValue: progress.readingMode) {
                 readingMode = mode
             }
-        }
-        
-        // Apply restored page
-        self.currentPage = savedPage
-        self.pageInputText = "\(savedPage)"
-        
-        // Add to recent files (preserve saved page if exists)
-        historyManager.addRecentFile(
-            path: url.path,
-            name: fileName,
-            currentPage: savedPage,  // Use saved page instead of always 1
-            totalPages: document.pageCount,
-            readingMode: readingMode
-        )
-    }
-    
-    private func openRecentFile(_ file: RecentFile) {
-        let url = URL(fileURLWithPath: file.path)
-        guard FileManager.default.fileExists(atPath: file.path) else {
-            errorMessage = String(localized: "檔案已移動或刪除")
-            showError = true
-            historyManager.removeFile(named: file.name)
-            return
-        }
-        loadPDF(from: url)
-    }
-    
-    private func saveCurrentProgress() {
-        guard let fileName = currentFileName else { 
-            return 
-        }
-        historyManager.updateProgress(name: fileName, currentPage: currentPage, readingMode: readingMode)
-    }
-}
-
-
-
-// MARK: - Recent File Row Component
-struct RecentFileRow: View {
-    let file: RecentFile
-    let onTap: () -> Void
-    
-    var body: some View {
-        Button(action: onTap) {
-            HStack {
-                Image(systemName: "doc.fill")
-                    .foregroundColor(.blue)
-                    .font(.title2)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(file.name)
-                        .font(.body)
-                        .lineLimit(1)
-                    
-                    HStack {
-                        Text(String(localized: "第 \(file.currentPage) 頁"))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Text("•")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Text(formatDate(file.lastOpened))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                Spacer()
-                
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            isContinuous = progress.isContinuous
+            if let app = ReadingAppearance(rawValue: progress.appearance) {
+                appearance = app
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(Color.gray.opacity(0.1))
-            .cornerRadius(8)
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private func formatDate(_ date: Date) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            let formatter = DateFormatter()
-            formatter.timeStyle = .short
-            return String(localized: "今天") + " " + formatter.string(from: date)
-        } else if calendar.isDateInYesterday(date) {
-            return String(localized: "昨天")
+            currentZoom = ZoomLevel(rawValue: progress.zoomLevel) ?? .fitPage
+            let page = min(max(progress.currentPage, 1), totalPages)
+            currentPage = page
+            pageInputText = "\(page)"
         } else {
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            return formatter.string(from: date)
+            readingMode = .singlePage
+            isContinuous = false
+            appearance = .automatic
+            currentZoom = .fitPage
+            currentPage = 1
+            pageInputText = "1"
         }
-    }
-}
 
-// MARK: - macOS Specific Implementation
-#if os(macOS)
-struct macOS_PDFKitView: NSViewRepresentable {
-    let document: PDFDocument
-    @Binding var readingMode: ReadingMode
-    @Binding var currentPage: Int
-    @Binding var pageInputText: String
-    @Binding var zoomLevel: ZoomLevel
-    let onPrevious: () -> Void
-    let onNext: () -> Void
-    
-    func makeNSView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        pdfView.autoScales = true
-        pdfView.pageBreakMargins = .zero
-        
-        // Add page changed notification observer
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.pageChanged(_:)),
-            name: .PDFViewPageChanged,
-            object: pdfView
+        let entry = RecentFile(
+            path: loaded.url.path,
+            name: loaded.fileName,
+            currentPage: currentPage,
+            totalPages: totalPages,
+            readingMode: readingMode,
+            isContinuous: isContinuous,
+            appearance: appearance,
+            zoomLevel: currentZoom,
+            bookmarkData: loaded.bookmarkData,
+            id: loaded.fileID
         )
-        
-        // Add pan gesture for swipe navigation
-        let panGesture = NSPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
-        pdfView.addGestureRecognizer(panGesture)
-        
-        return pdfView
+        historyManager.addRecentFile(entry)
+
+        isToolbarHidden = false
+        showScrubber = true
     }
 
-    func updateNSView(_ nsView: PDFView, context: Context) {
-        context.coordinator.parent = self
-        
-        // Update document if changed
-        let documentChanged = nsView.document != document
-        if documentChanged {
-            nsView.document = document
-            // Don't call goToFirstPage here - let the page restoration logic handle it
+    private func presentError(_ error: Error) {
+        if let pdfError = error as? PDFError {
+            errorMessage = pdfError.errorDescription
+        } else {
+            errorMessage = error.localizedDescription
         }
-        
-        // Check if reading mode actually changed
-        let modeChanged = context.coordinator.previousMode != readingMode
-        if modeChanged {
-            context.coordinator.previousMode = readingMode
-            context.coordinator.isChangingMode = true
-            // Reset the flag after a brief delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                context.coordinator.isChangingMode = false
-            }
-        }
-        
-        // Update reading mode
-        nsView.pageBreakMargins = .zero
-        
-        switch readingMode {
-        case .singlePage:
-            nsView.displayMode = .singlePage
-            nsView.displaysAsBook = false
-            nsView.displaysRTL = false
-        case .twoPagesLTR:
-            nsView.displayMode = .twoUp
-            nsView.displaysAsBook = true
-            nsView.displaysRTL = false
-        case .twoPagesRTL:
-            nsView.displayMode = .twoUp
-            nsView.displaysAsBook = true
-            nsView.displaysRTL = true
-        }
-        
-        // Update zoom level
-        applyZoom(to: nsView, level: zoomLevel)
-        
-        // Only navigate to page if document changed or page number actually differs
-        // Do NOT navigate if only mode changed
-        if currentPage >= 1, currentPage <= (nsView.document?.pageCount ?? 0),
-           let targetPage = nsView.document?.page(at: currentPage - 1) {
-            // Only jump if document is new OR current page differs (not just mode change)
-            if documentChanged {
-                // Use async to ensure document is fully loaded
-                DispatchQueue.main.async {
-                    nsView.go(to: targetPage)
-                }
-            } else if nsView.currentPage != targetPage && !modeChanged {
-                // Page changed but not mode - navigate normally
-                nsView.go(to: targetPage)
-            }
-            // If only mode changed, don't navigate - PDFKit handles this automatically
+        showError = true
+    }
+
+    // MARK: - Progress
+
+    private func scheduleSaveProgress() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            saveCurrentProgress()
         }
     }
-    
-    private func applyZoom(to pdfView: PDFView, level: ZoomLevel) {
-        switch level {
-        case .fitPage:
-            pdfView.autoScales = true
-        case .fitWidth:
-            pdfView.autoScales = false
-            if let page = pdfView.currentPage {
-                let pageBounds = page.bounds(for: .mediaBox)
-                let viewWidth = pdfView.bounds.width
-                let scale = viewWidth / pageBounds.width
-                pdfView.scaleFactor = scale
-            }
-        default:
-            pdfView.autoScales = false
-            if let scaleFactor = level.scaleFactor {
-                pdfView.scaleFactor = scaleFactor
-            }
-        }
+
+    private func saveCurrentProgress() {
+        guard let id = currentFileID else { return }
+        historyManager.updateProgress(
+            id: id,
+            currentPage: currentPage,
+            totalPages: totalPages,
+            readingMode: readingMode,
+            isContinuous: isContinuous,
+            appearance: appearance,
+            zoomLevel: currentZoom
+        )
     }
-    
-    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
-    
-    class Coordinator: NSObject {
-        var parent: macOS_PDFKitView
-        private var startPoint: NSPoint?
-        var previousMode: ReadingMode?
-        var isChangingMode = false
 
-        init(parent: macOS_PDFKitView) {
-            self.parent = parent
-            self.previousMode = parent.readingMode
-        }
-        
-        @objc func pageChanged(_ notification: Notification) {
-            guard let pdfView = notification.object as? PDFView,
-                  let currentPDFPage = pdfView.currentPage,
-                  let document = pdfView.document else {
-                return
-            }
-            let pageIndex = document.index(for: currentPDFPage)
-            let newPage = pageIndex + 1
-            
-            // Only update if the page actually changed AND we're not in the middle of a mode change
-            // This prevents the notification loop during mode switches
-            if self.parent.currentPage != newPage && !self.isChangingMode {
-                // Update the binding and text field
-                DispatchQueue.main.async {
-                    self.parent.currentPage = newPage
-                    self.parent.pageInputText = "\(newPage)"
-                }
-            }
-        }
+    // MARK: - Drag & drop (macOS)
 
-        @objc func handlePan(_ gesture: NSPanGestureRecognizer) {
-            guard let view = gesture.view as? PDFView else { return }
-            switch gesture.state {
-            case .began:
-                startPoint = gesture.location(in: view)
-            case .ended:
-                guard let start = startPoint else { return }
-                let end = gesture.location(in: view)
-                let translation = NSPoint(x: end.x - start.x, y: end.y - start.y)
+    #if os(macOS)
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
 
-                if abs(translation.x) > abs(translation.y) && abs(translation.x) > 50 {
-                    let isBookMode = parent.readingMode == .twoPagesRTL
-                    
-                    if translation.x < 0 { // Swipe Left
-                        if isBookMode {
-                            if view.canGoToPreviousPage { view.goToPreviousPage(nil) }
-                        } else {
-                            if view.canGoToNextPage { view.goToNextPage(nil) }
-                        }
-                    } else { // Swipe Right
-                        if isBookMode {
-                            if view.canGoToNextPage { view.goToNextPage(nil) }
-                        } else {
-                            if view.canGoToPreviousPage { view.goToPreviousPage(nil) }
-                        }
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let url: URL? = {
+                    if let data = item as? Data {
+                        return URL(dataRepresentation: data, relativeTo: nil)
                     }
-                    // Page sync is handled by the PDFViewPageChanged notification
+                    if let url = item as? URL { return url }
+                    if let str = item as? String { return URL(fileURLWithPath: str) }
+                    return nil
+                }()
+                guard let url, url.pathExtension.lowercased() == "pdf" else { return }
+                Task { @MainActor in
+                    await loadPDF(from: url)
                 }
-                startPoint = nil
-            default: break
             }
+            return true
         }
-        
-        deinit {
-            NotificationCenter.default.removeObserver(self)
-        }
+        return false
     }
+    #endif
 }
-#endif
 
-// MARK: - iOS Specific Implementation
-#if os(iOS)
-struct iOS_PDFKitView: UIViewRepresentable {
-    let document: PDFDocument
-    @Binding var readingMode: ReadingMode
-    @Binding var currentPage: Int
-    @Binding var pageInputText: String
-    @Binding var zoomLevel: ZoomLevel
+// MARK: - Open URL helper (cross-platform)
 
-    func makeUIView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        pdfView.autoScales = true
-        
-        // Add page changed notification observer
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.pageChanged(_:)),
-            name: .PDFViewPageChanged,
-            object: pdfView
-        )
-        
-        let swipeLeft = UISwipeGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSwipe(_:)))
-        swipeLeft.direction = .left
-        pdfView.addGestureRecognizer(swipeLeft)
-        
-        let swipeRight = UISwipeGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSwipe(_:)))
-        swipeRight.direction = .right
-        pdfView.addGestureRecognizer(swipeRight)
-        
-        return pdfView
-    }
+private struct OpenURLModifier: ViewModifier {
+    let handler: (URL) -> Void
 
-    func updateUIView(_ uiView: PDFView, context: Context) {
-        context.coordinator.parent = self
-        
-        let documentChanged = uiView.document != document
-        if documentChanged {
-            uiView.document = document
-            // Don't call goToFirstPage here - let the page restoration logic handle it
-        }
-        
-        uiView.pageBreakMargins = .zero
-        
-        switch readingMode {
-        case .singlePage:
-            uiView.displayMode = .singlePage
-            uiView.displaysAsBook = false
-        case .twoPagesLTR, .twoPagesRTL:
-            uiView.displayMode = .twoUp
-            uiView.displaysAsBook = true
-        }
-        
-        // Update zoom level
-        applyZoom(to: uiView, level: zoomLevel)
-        
-        // Update current page - always jump to the desired page
-        if currentPage >= 1, currentPage <= (uiView.document?.pageCount ?? 0),
-           let targetPage = uiView.document?.page(at: currentPage - 1) {
-            // Force jump to target page, especially important after document load
-            if documentChanged || uiView.currentPage != targetPage {
-                // Use async to ensure document is fully loaded
-                DispatchQueue.main.async {
-                    uiView.go(to: targetPage)
-                }
-            }
-        }
-    }
-    
-    private func applyZoom(to pdfView: PDFView, level: ZoomLevel) {
-        switch level {
-        case .fitPage:
-            pdfView.autoScales = true
-        case .fitWidth:
-            pdfView.autoScales = false
-            if let page = pdfView.currentPage {
-                let pageBounds = page.bounds(for: .mediaBox)
-                let viewWidth = pdfView.bounds.width
-                let scale = viewWidth / pageBounds.width
-                pdfView.scaleFactor = scale
-            }
-        default:
-            pdfView.autoScales = false
-            if let scaleFactor = level.scaleFactor {
-                pdfView.scaleFactor = scaleFactor
-            }
-        }
-    }
-    
-    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
-    
-    class Coordinator: NSObject {
-        var parent: iOS_PDFKitView
-
-        init(parent: iOS_PDFKitView) {
-            self.parent = parent
-        }
-        
-        @objc func pageChanged(_ notification: Notification) {
-            guard let pdfView = notification.object as? PDFView,
-                  let currentPDFPage = pdfView.currentPage,
-                  let document = pdfView.document else {
-                return
-            }
-            let pageIndex = document.index(for: currentPDFPage)
-            
-            // Update the binding and text field
-            DispatchQueue.main.async {
-                self.parent.currentPage = pageIndex + 1
-                self.parent.pageInputText = "\(pageIndex + 1)"
-            }
-        }
-
-        @objc func handleSwipe(_ gesture: UISwipeGestureRecognizer) {
-            guard let view = gesture.view as? PDFView else { return }
-            
-            let isBookMode = parent.readingMode == .twoPagesRTL
-
-            if gesture.direction == .left {
-                if isBookMode {
-                    if view.canGoToPreviousPage { view.goToPreviousPage(nil) }
-                } else {
-                    if view.canGoToNextPage { view.goToNextPage(nil) }
-                }
-            } else if gesture.direction == .right {
-                if isBookMode {
-                    if view.canGoToNextPage { view.goToNextPage(nil) }
-                } else {
-                    if view.canGoToPreviousPage { view.goToPreviousPage(nil) }
-                }
-            }
-        }
-        
-        deinit {
-            NotificationCenter.default.removeObserver(self)
+    func body(content: Content) -> some View {
+        content.onOpenURL { url in
+            handler(url)
         }
     }
 }
 
-struct DocumentPicker: UIViewControllerRepresentable {
-    var onPick: (URL) -> Void
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.pdf], asCopy: true)
-        picker.delegate = context.coordinator
-        return picker
-    }
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-    class Coordinator: NSObject, UIDocumentPickerDelegate {
-        var parent: DocumentPicker
-        init(_ parent: DocumentPicker) { self.parent = parent }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first else { return }
-            parent.onPick(url)
-        }
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
     }
 }
-#endif
-
-#Preview {
-    ContentView()
-}
-
