@@ -122,8 +122,8 @@ struct ThumbnailCell: View {
                     return
                 }
 
-                let generated = await Task.detached(priority: .utility) {
-                    autoreleasepool {
+                let generated = await Task.detached(priority: .utility) { () -> PlatformImage? in
+                    autoreleasepool { () -> PlatformImage? in
                         guard let isolatedDocument = PDFDocument(url: sourceURL),
                               let page = isolatedDocument.page(at: idx) else { return nil }
                         return page.thumbnail(of: CGSize(width: 160, height: 220), for: .mediaBox)
