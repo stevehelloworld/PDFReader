@@ -41,6 +41,22 @@ enum ReadingMode: String, CaseIterable, Identifiable, Codable {
     var isRTL: Bool {
         self == .twoPagesRTL
     }
+
+    func pageAfterTurn(from page: Int, totalPages: Int, forward: Bool) -> Int? {
+        guard totalPages > 0, (1...totalPages).contains(page) else { return nil }
+        guard isBookMode else {
+            let target = page + (forward ? 1 : -1)
+            return (1...totalPages).contains(target) ? target : nil
+        }
+
+        // In book mode, page 1 is the cover; the remaining pages are turned as spreads.
+        guard page > 1 else { return forward && totalPages > 1 ? 2 : nil }
+        if !forward, page <= 3 { return 1 }
+        let spreadStart = page.isMultiple(of: 2) ? page : page - 1
+        let target = forward ? spreadStart + 2 : spreadStart - 2
+        guard (1...totalPages).contains(target) else { return nil }
+        return target
+    }
 }
 
 // MARK: - Zoom Level

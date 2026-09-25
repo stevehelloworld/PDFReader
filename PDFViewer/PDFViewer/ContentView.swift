@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var readingMode: ReadingMode = .singlePage
     @State private var isContinuous = false
     @State private var currentPage = 1
+    @State private var pdfViewPageSource = PDFViewPageSource()
     @State private var totalPages = 0
     @State private var pageInputText = ""
     @State private var currentZoom: ZoomLevel = .fitPage
@@ -55,7 +56,6 @@ struct ContentView: View {
 
     @ObservedObject private var historyManager = PDFHistoryManager.shared
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         Group {
@@ -137,7 +137,17 @@ struct ContentView: View {
                 Color.clear.frame(width: 0)
             }
         } detail: {
-            readerContainer
+            VStack(spacing: 0) {
+                if document != nil, !isToolbarHidden {
+                    readingModeButtonSelector(maxWidth: 720)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(.bar)
+                }
+
+                readerContainer
+            }
                 .frame(minWidth: 480, minHeight: 360)
                 .navigationTitle(currentFileName ?? "ComicPDFReader")
                 .toolbar { macToolbar }
@@ -186,7 +196,6 @@ struct ContentView: View {
 
         ToolbarItemGroup(placement: .principal) {
             if document != nil {
-                readingModePicker
                 continuousToggle
             }
         }
@@ -202,6 +211,10 @@ struct ContentView: View {
 
                 appearanceMenu
                 zoomControls
+                Button(action: toggleReaderChrome) {
+                    Label(fullscreenLabel, systemImage: fullscreenIcon)
+                }
+                .help(fullscreenLabel)
 
                 Button(action: openFile) {
                     Label(String(localized: "開啟"), systemImage: "doc.badge.plus")
@@ -227,9 +240,10 @@ struct ContentView: View {
                 .toolbar { iOSToolbar }
                 .toolbar(isToolbarHidden ? .hidden : .automatic, for: .navigationBar)
                 .toolbar(isToolbarHidden ? .hidden : .automatic, for: .bottomBar)
+                .statusBarHidden(isToolbarHidden)
                 .safeAreaInset(edge: .bottom) {
-                    if document != nil, !isToolbarHidden, horizontalSizeClass == .compact {
-                        iPhoneBottomBar
+                    if document != nil, !isToolbarHidden {
+                        iOSReaderControls
                     }
                 }
         }
@@ -290,16 +304,12 @@ struct ContentView: View {
 
         ToolbarItemGroup(placement: .topBarTrailing) {
             if document != nil {
-                if horizontalSizeClass != .compact {
-                    pageNavigationControls
-                    readingModePicker
-                }
                 Button { showSearch = true } label: {
                     Image(systemName: "magnifyingglass")
                 }
                 Menu {
                     readingModeMenuContent
-                    Toggle(String(localized: "連續捲動"), isOn: $isContinuous)
+                    Toggle(String(localized: "連續捲動"), isOn: continuousSelection)
                     Divider()
                     appearanceMenuContent
                     Divider()
@@ -315,53 +325,104 @@ struct ContentView: View {
         }
     }
 
-    private var iPhoneBottomBar: some View {
-        HStack(spacing: 16) {
-            Button(action: goToPreviousPage) {
-                Image(systemName: "chevron.left")
-                    .frame(width: 44, height: 44)
-            }
-            .disabled(currentPage <= 1)
-            .accessibilityLabel(String(localized: "上一頁"))
+    private var iOSReaderControls: some View {
+        VStack(spacing: 10) {
+            readingModeButtonSelector()
 
-            HStack(spacing: 4) {
-                TextField(String(localized: "頁碼"), text: $pageInputText)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.center)
-                    .frame(width: 48)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { submitPageInput() }
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    TextField(String(localized: "頁碼"), text: $pageInputText)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 48)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { submitPageInput() }
 
-                Text("/ \(totalPages)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            Button(action: goToNextPage) {
-                Image(systemName: "chevron.right")
-                    .frame(width: 44, height: 44)
-            }
-            .disabled(currentPage >= totalPages)
-            .accessibilityLabel(String(localized: "下一頁"))
-
-            Spacer(minLength: 0)
-
-            Picker("", selection: $readingMode) {
-                ForEach(ReadingMode.allCases) { mode in
-                    Label(mode.label, systemImage: mode.icon)
-                        .labelStyle(.iconOnly)
-                        .tag(mode)
+                    Text("/ \(totalPages)")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
+
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 160)
-            .accessibilityLabel(String(localized: "閱讀模式"))
+
+            Button(action: toggleReaderChrome) {
+                Label(String(localized: "全螢幕閱讀"), systemImage: "arrow.up.left.and.arrow.down.right")
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityLabel(String(localized: "全螢幕閱讀"))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
         .background(.bar)
     }
+
     #endif
+
+    private func readingModeButtonSelector(maxWidth: CGFloat = .infinity) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(String(localized: "閱讀模式"))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                ForEach(ReadingMode.allCases) { mode in
+                    let isSelected = readingMode == mode
+                    Button {
+                        selectReadingMode(mode)
+                    } label: {
+                        VStack(spacing: 7) {
+                            readingModeSymbol(for: mode)
+                                .font(.system(size: 20, weight: .semibold))
+
+                            Text(mode.label)
+                                .font(.system(.callout, weight: isSelected ? .semibold : .medium))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                                .minimumScaleFactor(0.8)
+                                .frame(maxWidth: .infinity, minHeight: 34)
+                        }
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        .frame(maxWidth: .infinity, minHeight: 76)
+                        .padding(.horizontal, 4)
+                        .background(
+                            isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.045),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(
+                                    isSelected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.12),
+                                    lineWidth: 1
+                                )
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(mode.label)
+                    .accessibilityHint(mode.description)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
+        .frame(maxWidth: maxWidth, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func readingModeSymbol(for mode: ReadingMode) -> some View {
+        if mode.isBookMode {
+            HStack(spacing: 2) {
+                Image(systemName: "book.closed")
+                Image(systemName: mode.isRTL ? "arrow.left" : "arrow.right")
+                    .font(.system(size: 12, weight: .bold))
+            }
+        } else {
+            Image(systemName: "doc.text")
+        }
+    }
 
     // MARK: - Shared reader container
 
@@ -382,6 +443,21 @@ struct ContentView: View {
 
             if isLoading, document != nil {
                 LoadingOverlay(message: String(localized: "正在載入…"))
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if isToolbarHidden {
+                Button(action: toggleReaderChrome) {
+                    Label(String(localized: "退出全螢幕閱讀"), systemImage: fullscreenIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "退出全螢幕閱讀"))
+                .padding(16)
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -415,6 +491,7 @@ struct ContentView: View {
             ZStack {
                 PDFKitView(
                     document: document,
+                    pageSource: pdfViewPageSource,
                     readingMode: $readingMode,
                     isContinuous: $isContinuous,
                     currentPage: $currentPage,
@@ -426,28 +503,38 @@ struct ContentView: View {
                     onPrevious: goToPreviousPage,
                     onNext: goToNextPage
                 )
+                #if os(iOS)
+                .id("\(readingMode.rawValue)-\(isContinuous)")
+                #endif
+                .simultaneousGesture(
+                    TapGesture(count: 2)
+                        .exclusively(before: TapGesture(count: 1))
+                        .onEnded { result in
+                            switch result {
+                            case .first:
+                                toggleReaderChrome()
+                            case .second where readingMode.isBookMode && !isContinuous:
+                                goToNextPage()
+                            case .second:
+                                break
+                            }
+                        }
+                )
                 .compositingGroup()
                 .overlay { AppearanceFilterOverlay(appearance: appearance) }
-
-                if !isContinuous {
-                    EdgeTapOverlay(
-                        isRTL: readingMode.isRTL,
-                        onPrevious: goToPreviousPage,
-                        onNext: goToNextPage
-                    )
-                }
             }
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                withAnimation {
-                    isToolbarHidden.toggle()
-                    showScrubber.toggle()
-                }
-            }
 
             if showScrubber, !isToolbarHidden {
                 PageScrubber(currentPage: $currentPage, totalPages: totalPages, onSeek: goToPage)
             }
+        }
+    }
+
+    private func toggleReaderChrome() {
+        withAnimation {
+            isToolbarHidden.toggle()
+            showScrubber.toggle()
         }
     }
 
@@ -507,19 +594,25 @@ struct ContentView: View {
         }
     }
 
-    private var readingModePicker: some View {
-        Picker(String(localized: "閱讀模式"), selection: $readingMode) {
-            ForEach(ReadingMode.allCases) { mode in
-                Label(mode.label, systemImage: mode.icon).tag(mode)
-            }
-        }
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 280)
-        .help(String(localized: "閱讀模式"))
+    private var continuousSelection: Binding<Bool> {
+        Binding(
+            get: { isContinuous },
+            set: { selectContinuousMode($0) }
+        )
+    }
+
+    private var fullscreenLabel: String {
+        isToolbarHidden
+            ? String(localized: "退出全螢幕閱讀")
+            : String(localized: "全螢幕閱讀")
+    }
+
+    private var fullscreenIcon: String {
+        isToolbarHidden ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
     }
 
     private var continuousToggle: some View {
-        Toggle(isOn: $isContinuous) {
+        Toggle(isOn: continuousSelection) {
             Image(systemName: "rectangle.stack")
         }
         .toggleStyle(.button)
@@ -575,7 +668,7 @@ struct ContentView: View {
     private var readingModeMenuContent: some View {
         ForEach(ReadingMode.allCases) { mode in
             Button {
-                readingMode = mode
+                selectReadingMode(mode)
             } label: {
                 Label(mode.label, systemImage: mode.icon)
             }
@@ -591,18 +684,46 @@ struct ContentView: View {
 
     // MARK: - Navigation
 
+    private func captureVisiblePage() {
+        guard let document else { return }
+        let visiblePage = pdfViewPageSource.currentPageNumber(in: document) ?? currentPage
+        guard (1...document.pageCount).contains(visiblePage) else { return }
+        pdfViewPageSource.protect(pageNumber: visiblePage, in: document)
+        currentPage = visiblePage
+        pageInputText = "\(visiblePage)"
+    }
+
+    private func selectReadingMode(_ mode: ReadingMode) {
+        guard mode != readingMode else { return }
+        captureVisiblePage()
+        readingMode = mode
+    }
+
+    private func selectContinuousMode(_ isContinuous: Bool) {
+        guard isContinuous != self.isContinuous else { return }
+        captureVisiblePage()
+        self.isContinuous = isContinuous
+    }
+
     private func goToPage(_ pageNumber: Int) {
         guard pageNumber >= 1, pageNumber <= totalPages else { return }
+        if let document {
+            pdfViewPageSource.clearPageProtection(in: document)
+        }
         currentPage = pageNumber
         pageInputText = "\(pageNumber)"
     }
 
     private func goToPreviousPage() {
-        if currentPage > 1 { goToPage(currentPage - 1) }
+        if let target = readingMode.pageAfterTurn(from: currentPage, totalPages: totalPages, forward: false) {
+            goToPage(target)
+        }
     }
 
     private func goToNextPage() {
-        if currentPage < totalPages { goToPage(currentPage + 1) }
+        if let target = readingMode.pageAfterTurn(from: currentPage, totalPages: totalPages, forward: true) {
+            goToPage(target)
+        }
     }
 
     private func submitPageInput() {

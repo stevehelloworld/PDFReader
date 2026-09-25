@@ -1,9 +1,97 @@
 import SwiftUI
 import PDFKit
 
+final class PDFViewPageSource {
+    private weak var pdfView: PDFView?
+    private weak var rememberedDocument: PDFDocument?
+    private var rememberedPage: Int?
+    private weak var protectedDocument: PDFDocument?
+    private var protectedPage: Int?
+
+    func attach(_ pdfView: PDFView) {
+        self.pdfView = pdfView
+    }
+
+    func detach(_ pdfView: PDFView) {
+        if self.pdfView === pdfView {
+            if let document = pdfView.document,
+               let pageNumber = currentPageNumber(in: document) {
+                remember(pageNumber: pageNumber, in: document)
+            }
+            self.pdfView = nil
+        }
+    }
+
+    func currentPageNumber(in document: PDFDocument) -> Int? {
+        if let pdfView,
+           pdfView.document === document,
+           let pageNumber = Self.pageNumber(in: pdfView, document: document) {
+            if shouldIgnorePageChange(pageNumber: pageNumber, in: document) {
+                return protectedPage
+            }
+            remember(pageNumber: pageNumber, in: document)
+            return pageNumber
+        }
+        return rememberedPageNumber(in: document)
+    }
+
+    func rememberedPageNumber(in document: PDFDocument) -> Int? {
+        guard rememberedDocument === document,
+              let rememberedPage,
+              (1...document.pageCount).contains(rememberedPage) else { return nil }
+        return rememberedPage
+    }
+
+    func remember(pageNumber: Int, in document: PDFDocument) {
+        guard (1...document.pageCount).contains(pageNumber) else { return }
+        rememberedDocument = document
+        rememberedPage = pageNumber
+    }
+
+    func protect(pageNumber: Int, in document: PDFDocument) {
+        guard (1...document.pageCount).contains(pageNumber) else { return }
+        remember(pageNumber: pageNumber, in: document)
+        protectedDocument = document
+        protectedPage = pageNumber
+    }
+
+    func clearPageProtection(in document: PDFDocument) {
+        guard protectedDocument === document else { return }
+        protectedDocument = nil
+        protectedPage = nil
+    }
+
+    func protectedPageNumber(in document: PDFDocument) -> Int? {
+        guard protectedDocument === document,
+              let protectedPage,
+              (1...document.pageCount).contains(protectedPage) else { return nil }
+        return protectedPage
+    }
+
+    func shouldIgnorePageChange(pageNumber: Int, in document: PDFDocument) -> Bool {
+        guard let protectedPage = protectedPageNumber(in: document) else { return false }
+        return pageNumber != protectedPage
+    }
+
+    private static func pageNumber(in pdfView: PDFView, document: PDFDocument) -> Int? {
+        guard let page = pdfView.currentPage else { return nil }
+        let index = document.index(for: page)
+        guard (0..<document.pageCount).contains(index) else { return nil }
+        return index + 1
+    }
+}
+
 // MARK: - Shared configuration applied to PDFView
 
 enum PDFViewConfigurator {
+    static func currentPageNumber(in pdfView: PDFView, fallback: Int) -> Int {
+        guard let document = pdfView.document,
+              let page = pdfView.currentPage else { return fallback }
+        let index = document.index(for: page)
+        guard (0..<document.pageCount).contains(index) else { return fallback }
+        return index + 1
+    }
+
     static func applyDisplayMode(
         to pdfView: PDFView,
         readingMode: ReadingMode,
@@ -64,6 +152,7 @@ enum PDFViewConfigurator {
     }
 
     static func forceLayout(of pdfView: PDFView) {
+        pdfView.layoutDocumentView()
         #if os(macOS)
         pdfView.needsLayout = true
         pdfView.layoutSubtreeIfNeeded()
@@ -101,6 +190,7 @@ enum PDFViewConfigurator {
 
 struct PDFKitView: View {
     let document: PDFDocument
+    let pageSource: PDFViewPageSource
     @Binding var readingMode: ReadingMode
     @Binding var isContinuous: Bool
     @Binding var currentPage: Int
@@ -117,6 +207,7 @@ struct PDFKitView: View {
             #if os(macOS)
             macOS_PDFKitView(
                 document: document,
+                pageSource: pageSource,
                 viewportSize: proxy.size,
                 readingMode: $readingMode,
                 isContinuous: $isContinuous,
@@ -132,6 +223,7 @@ struct PDFKitView: View {
             #elseif os(iOS)
             iOS_PDFKitView(
                 document: document,
+                pageSource: pageSource,
                 viewportSize: proxy.size,
                 readingMode: $readingMode,
                 isContinuous: $isContinuous,
@@ -140,7 +232,9 @@ struct PDFKitView: View {
                 zoomLevel: $zoomLevel,
                 appearance: $appearance,
                 pendingSelection: pendingSelection,
-                onSelectionConsumed: onSelectionConsumed
+                onSelectionConsumed: onSelectionConsumed,
+                onPrevious: onPrevious,
+                onNext: onNext
             )
             #endif
         }
@@ -152,6 +246,7 @@ struct PDFKitView: View {
 #if os(macOS)
 struct macOS_PDFKitView: NSViewRepresentable {
     let document: PDFDocument
+    let pageSource: PDFViewPageSource
     let viewportSize: CGSize
     @Binding var readingMode: ReadingMode
     @Binding var isContinuous: Bool
@@ -166,6 +261,7 @@ struct macOS_PDFKitView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PDFView {
         let pdfView = PDFView()
+        pageSource.attach(pdfView)
         pdfView.autoScales = true
         pdfView.pageBreakMargins = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
@@ -186,9 +282,11 @@ struct macOS_PDFKitView: NSViewRepresentable {
     func updateNSView(_ nsView: PDFView, context: Context) {
         let c = context.coordinator
         c.parent = self
+        let rememberedPageBeforeUpdate = pageSource.rememberedPageNumber(in: document)
 
         // Document
-        if c.appliedDocument !== document {
+        let documentChanged = c.appliedDocument !== document
+        if documentChanged {
             nsView.document = document
             c.appliedDocument = document
             c.needsPageRestore = true
@@ -200,9 +298,13 @@ struct macOS_PDFKitView: NSViewRepresentable {
         if displayModeChanged {
             c.displayRefreshID &+= 1
             let refreshID = c.displayRefreshID
-            let requestedPage = currentPage
+            let fallbackPage = rememberedPageBeforeUpdate ?? (c.appliedPage > 0 ? c.appliedPage : currentPage)
+            let requestedPage = documentChanged
+                ? fallbackPage
+                : PDFViewConfigurator.currentPageNumber(in: nsView, fallback: fallbackPage)
             c.isProgrammaticNavigation = true
             c.isProgrammaticSuppressed = true
+            pageSource.protect(pageNumber: requestedPage, in: document)
 
             PDFViewConfigurator.applyDisplayMode(to: nsView, readingMode: readingMode, isContinuous: isContinuous)
             PDFViewConfigurator.forceLayout(of: nsView)
@@ -227,13 +329,18 @@ struct macOS_PDFKitView: NSViewRepresentable {
             // PDFKit finishes rebuilding its internal page views on the next run loop.
             // Reassert the requested page and zoom once, discarding stale rapid toggles.
             DispatchQueue.main.async {
-                guard c.displayRefreshID == refreshID else { return }
+                guard !c.isDismantled, c.displayRefreshID == refreshID else { return }
                 PDFViewConfigurator.forceLayout(of: nsView)
                 if requestedPage >= 1,
                    requestedPage <= document.pageCount,
                    let targetPage = document.page(at: requestedPage - 1) {
-                    nsView.go(to: targetPage)
-                    c.appliedPage = requestedPage
+                    if pageSource.protectedPageNumber(in: document) == requestedPage {
+                        nsView.go(to: targetPage)
+                        currentPage = requestedPage
+                        pageInputText = "\(requestedPage)"
+                        c.appliedPage = requestedPage
+                        pageSource.remember(pageNumber: requestedPage, in: document)
+                    }
                 }
                 PDFViewConfigurator.applyZoom(
                     to: nsView,
@@ -286,6 +393,16 @@ struct macOS_PDFKitView: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ nsView: PDFView, coordinator: Coordinator) {
+        coordinator.isDismantled = true
+        coordinator.parent.pageSource.detach(nsView)
+        NotificationCenter.default.removeObserver(
+            coordinator,
+            name: .PDFViewPageChanged,
+            object: nsView
+        )
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
     final class Coordinator: NSObject, NSGestureRecognizerDelegate {
@@ -302,6 +419,7 @@ struct macOS_PDFKitView: NSViewRepresentable {
         var displayRefreshID = 0
         /// Brief suppress after mode change so PDFKit's internal page adjust doesn't fight us.
         var isProgrammaticSuppressed = false
+        var isDismantled = false
         private var startPoint: NSPoint?
 
         init(parent: macOS_PDFKitView) {
@@ -309,11 +427,18 @@ struct macOS_PDFKitView: NSViewRepresentable {
         }
 
         @objc func pageChanged(_ notification: Notification) {
-            guard let pdfView = notification.object as? PDFView,
+            guard !isDismantled,
+                  let pdfView = notification.object as? PDFView,
                   let currentPDFPage = pdfView.currentPage,
                   let document = pdfView.document else { return }
 
             let newPage = document.index(for: currentPDFPage) + 1
+            guard (1...document.pageCount).contains(newPage) else { return }
+            if parent.pageSource.shouldIgnorePageChange(pageNumber: newPage, in: document) {
+                appliedPage = parent.pageSource.protectedPageNumber(in: document) ?? parent.currentPage
+                return
+            }
+            parent.pageSource.remember(pageNumber: newPage, in: document)
             guard newPage != parent.currentPage else {
                 appliedPage = newPage
                 return
@@ -323,17 +448,32 @@ struct macOS_PDFKitView: NSViewRepresentable {
                 return
             }
 
-            DispatchQueue.main.async {
-                self.parent.currentPage = newPage
-                self.parent.pageInputText = "\(newPage)"
-                self.appliedPage = newPage
+            publishPageChange(newPage)
+        }
+
+        private func publishPageChange(_ page: Int) {
+            guard !isDismantled else { return }
+            if Thread.isMainThread {
+                guard !isProgrammaticNavigation && !isProgrammaticSuppressed else { return }
+                // Keep SwiftUI's page state current before a mode switch rebuilds PDFView.
+                parent.currentPage = page
+                parent.pageInputText = "\(page)"
+                appliedPage = page
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.publishPageChange(page)
+                }
             }
         }
 
         @objc func handlePan(_ gesture: NSPanGestureRecognizer) {
             // Only use pan for page-turns in non-continuous discrete page modes.
+            guard let view = gesture.view as? PDFView,
+                  let document = view.document else { return }
+            if gesture.state == .began {
+                parent.pageSource.clearPageProtection(in: document)
+            }
             guard !parent.isContinuous else { return }
-            guard let view = gesture.view as? PDFView else { return }
 
             switch gesture.state {
             case .began:
@@ -350,11 +490,11 @@ struct macOS_PDFKitView: NSViewRepresentable {
 
                 let rtl = parent.readingMode.isRTL
                 if dx < 0 {
-                    if rtl { if view.canGoToPreviousPage { view.goToPreviousPage(nil) } }
-                    else { if view.canGoToNextPage { view.goToNextPage(nil) } }
+                    if rtl { parent.onPrevious() }
+                    else { parent.onNext() }
                 } else {
-                    if rtl { if view.canGoToNextPage { view.goToNextPage(nil) } }
-                    else { if view.canGoToPreviousPage { view.goToPreviousPage(nil) } }
+                    if rtl { parent.onNext() }
+                    else { parent.onPrevious() }
                 }
                 startPoint = nil
             default:
@@ -381,6 +521,7 @@ struct macOS_PDFKitView: NSViewRepresentable {
 #if os(iOS)
 struct iOS_PDFKitView: UIViewRepresentable {
     let document: PDFDocument
+    let pageSource: PDFViewPageSource
     let viewportSize: CGSize
     @Binding var readingMode: ReadingMode
     @Binding var isContinuous: Bool
@@ -390,9 +531,12 @@ struct iOS_PDFKitView: UIViewRepresentable {
     @Binding var appearance: ReadingAppearance
     var pendingSelection: PDFSelection?
     var onSelectionConsumed: () -> Void
+    let onPrevious: () -> Void
+    let onNext: () -> Void
 
     func makeUIView(context: Context) -> PDFView {
         let pdfView = PDFView()
+        pageSource.attach(pdfView)
         pdfView.autoScales = true
         pdfView.pageBreakMargins = .zero
 
@@ -403,13 +547,14 @@ struct iOS_PDFKitView: UIViewRepresentable {
             object: pdfView
         )
 
-        let left = UISwipeGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSwipe(_:)))
-        left.direction = .left
-        pdfView.addGestureRecognizer(left)
-
-        let right = UISwipeGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSwipe(_:)))
-        right.direction = .right
-        pdfView.addGestureRecognizer(right)
+        let horizontalPan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleHorizontalPan(_:))
+        )
+        horizontalPan.delegate = context.coordinator
+        horizontalPan.cancelsTouchesInView = false
+        horizontalPan.maximumNumberOfTouches = 1
+        pdfView.addGestureRecognizer(horizontalPan)
 
         return pdfView
     }
@@ -417,8 +562,10 @@ struct iOS_PDFKitView: UIViewRepresentable {
     func updateUIView(_ uiView: PDFView, context: Context) {
         let c = context.coordinator
         c.parent = self
+        let rememberedPageBeforeUpdate = pageSource.rememberedPageNumber(in: document)
 
-        if c.appliedDocument !== document {
+        let documentChanged = c.appliedDocument !== document
+        if documentChanged {
             uiView.document = document
             c.appliedDocument = document
             c.needsPageRestore = true
@@ -429,10 +576,15 @@ struct iOS_PDFKitView: UIViewRepresentable {
         if displayModeChanged {
             c.displayRefreshID &+= 1
             let refreshID = c.displayRefreshID
-            let requestedPage = currentPage
+            let fallbackPage = rememberedPageBeforeUpdate ?? (c.appliedPage > 0 ? c.appliedPage : currentPage)
+            let requestedPage = documentChanged
+                ? fallbackPage
+                : PDFViewConfigurator.currentPageNumber(in: uiView, fallback: fallbackPage)
             c.isProgrammaticNavigation = true
+            pageSource.protect(pageNumber: requestedPage, in: document)
 
             PDFViewConfigurator.applyDisplayMode(to: uiView, readingMode: readingMode, isContinuous: isContinuous)
+            uiView.usePageViewController(!isContinuous, withViewOptions: nil)
             PDFViewConfigurator.forceLayout(of: uiView)
             if requestedPage >= 1,
                requestedPage <= document.pageCount,
@@ -453,13 +605,18 @@ struct iOS_PDFKitView: UIViewRepresentable {
             c.appliedViewportSize = viewportSize
 
             DispatchQueue.main.async {
-                guard c.displayRefreshID == refreshID else { return }
+                guard !c.isDismantled, c.displayRefreshID == refreshID else { return }
                 PDFViewConfigurator.forceLayout(of: uiView)
                 if requestedPage >= 1,
                    requestedPage <= document.pageCount,
                    let targetPage = document.page(at: requestedPage - 1) {
-                    uiView.go(to: targetPage)
-                    c.appliedPage = requestedPage
+                    if pageSource.protectedPageNumber(in: document) == requestedPage {
+                        uiView.go(to: targetPage)
+                        currentPage = requestedPage
+                        pageInputText = "\(requestedPage)"
+                        c.appliedPage = requestedPage
+                        pageSource.remember(pageNumber: requestedPage, in: document)
+                    }
                 }
                 PDFViewConfigurator.applyZoom(
                     to: uiView,
@@ -507,9 +664,19 @@ struct iOS_PDFKitView: UIViewRepresentable {
         }
     }
 
+    static func dismantleUIView(_ uiView: PDFView, coordinator: Coordinator) {
+        coordinator.isDismantled = true
+        coordinator.parent.pageSource.detach(uiView)
+        NotificationCenter.default.removeObserver(
+            coordinator,
+            name: .PDFViewPageChanged,
+            object: uiView
+        )
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: iOS_PDFKitView
         weak var appliedDocument: PDFDocument?
         var appliedMode: ReadingMode?
@@ -521,17 +688,26 @@ struct iOS_PDFKitView: UIViewRepresentable {
         var needsPageRestore = false
         var isProgrammaticNavigation = false
         var displayRefreshID = 0
+        var isDismantled = false
+        private var swipeStartPage: Int?
 
         init(parent: iOS_PDFKitView) {
             self.parent = parent
         }
 
         @objc func pageChanged(_ notification: Notification) {
-            guard let pdfView = notification.object as? PDFView,
+            guard !isDismantled,
+                  let pdfView = notification.object as? PDFView,
                   let currentPDFPage = pdfView.currentPage,
                   let document = pdfView.document else { return }
 
             let newPage = document.index(for: currentPDFPage) + 1
+            guard (1...document.pageCount).contains(newPage) else { return }
+            if parent.pageSource.shouldIgnorePageChange(pageNumber: newPage, in: document) {
+                appliedPage = parent.pageSource.protectedPageNumber(in: document) ?? parent.currentPage
+                return
+            }
+            parent.pageSource.remember(pageNumber: newPage, in: document)
             guard newPage != parent.currentPage else {
                 appliedPage = newPage
                 return
@@ -541,24 +717,88 @@ struct iOS_PDFKitView: UIViewRepresentable {
                 return
             }
 
-            DispatchQueue.main.async {
-                self.parent.currentPage = newPage
-                self.parent.pageInputText = "\(newPage)"
-                self.appliedPage = newPage
+            publishPageChange(newPage)
+        }
+
+        private func publishPageChange(_ page: Int) {
+            guard !isDismantled else { return }
+            if Thread.isMainThread {
+                guard !isProgrammaticNavigation else { return }
+                // Keep SwiftUI's page state current before a mode switch rebuilds PDFView.
+                parent.currentPage = page
+                parent.pageInputText = "\(page)"
+                appliedPage = page
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.publishPageChange(page)
+                }
             }
         }
 
-        @objc func handleSwipe(_ gesture: UISwipeGestureRecognizer) {
-            guard !parent.isContinuous else { return }
-            guard let view = gesture.view as? PDFView else { return }
-            let rtl = parent.readingMode.isRTL
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
+                  let view = pan.view else { return true }
+            let velocity = pan.velocity(in: view)
+            return abs(velocity.x) > abs(velocity.y) * 1.2 && abs(velocity.x) > 100
+        }
 
-            if gesture.direction == .left {
-                if rtl { if view.canGoToPreviousPage { view.goToPreviousPage(nil) } }
-                else { if view.canGoToNextPage { view.goToNextPage(nil) } }
-            } else if gesture.direction == .right {
-                if rtl { if view.canGoToNextPage { view.goToNextPage(nil) } }
-                else { if view.canGoToPreviousPage { view.goToPreviousPage(nil) } }
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+
+        @objc func handleHorizontalPan(_ gesture: UIPanGestureRecognizer) {
+            guard let pdfView = gesture.view as? PDFView,
+                  let document = pdfView.document else { return }
+            if gesture.state == .began {
+                parent.pageSource.clearPageProtection(in: document)
+            }
+            guard !parent.isContinuous else {
+                swipeStartPage = nil
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                swipeStartPage = PDFViewConfigurator.currentPageNumber(
+                    in: pdfView,
+                    fallback: parent.currentPage
+                )
+            case .ended:
+                guard let startPage = swipeStartPage else { return }
+                swipeStartPage = nil
+                let translation = gesture.translation(in: pdfView)
+                guard abs(translation.x) > 60,
+                      abs(translation.x) > abs(translation.y) else { return }
+                let isSwipingLeft = translation.x < 0
+
+                // Let PDFKit's page controller finish first when its native curl gesture won.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    guard let self,
+                          !self.isDismantled,
+                          pdfView.document === document else { return }
+                    let visiblePage = PDFViewConfigurator.currentPageNumber(
+                        in: pdfView,
+                        fallback: self.parent.currentPage
+                    )
+                    guard visiblePage == startPage else {
+                        self.parent.currentPage = visiblePage
+                        self.parent.pageInputText = "\(visiblePage)"
+                        self.appliedPage = visiblePage
+                        return
+                    }
+                    guard self.parent.currentPage == startPage else { return }
+
+                    let forward = isSwipingLeft != self.parent.readingMode.isRTL
+                    if forward { self.parent.onNext() }
+                    else { self.parent.onPrevious() }
+                }
+            case .cancelled, .failed:
+                swipeStartPage = nil
+            default:
+                break
             }
         }
 

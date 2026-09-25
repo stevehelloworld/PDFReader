@@ -7,6 +7,7 @@
 
 import Testing
 import Foundation
+import PDFKit
 @testable import PDFViewer
 
 struct PDFViewerTests {
@@ -17,6 +18,50 @@ struct PDFViewerTests {
         #expect(!ReadingMode.singlePage.isRTL)
         #expect(ReadingMode.twoPagesLTR.isBookMode)
         #expect(!ReadingMode.singlePage.isBookMode)
+    }
+
+    @Test func pageTurnsAdvanceByVisibleSpread() {
+        #expect(ReadingMode.twoPagesLTR.pageAfterTurn(from: 1, totalPages: 10, forward: true) == 2)
+        #expect(ReadingMode.twoPagesLTR.pageAfterTurn(from: 2, totalPages: 10, forward: true) == 4)
+        #expect(ReadingMode.twoPagesLTR.pageAfterTurn(from: 3, totalPages: 10, forward: true) == 4)
+        #expect(ReadingMode.twoPagesRTL.pageAfterTurn(from: 4, totalPages: 10, forward: false) == 2)
+        #expect(ReadingMode.twoPagesLTR.pageAfterTurn(from: 5, totalPages: 5, forward: true) == nil)
+        #expect(ReadingMode.twoPagesLTR.pageAfterTurn(from: 2, totalPages: 5, forward: false) == 1)
+        #expect(ReadingMode.twoPagesLTR.pageAfterTurn(from: 3, totalPages: 5, forward: false) == 1)
+    }
+
+    @Test @MainActor func modeSwitchCaptureUsesThePDFViewsVisiblePage() {
+        let document = PDFDocument()
+        for index in 0..<5 {
+            document.insert(PDFPage(), at: index)
+        }
+
+        let pdfView = PDFView()
+        pdfView.document = document
+        pdfView.go(to: document.page(at: 3)!)
+        let pageSource = PDFViewPageSource()
+        pageSource.attach(pdfView)
+
+        #expect(pageSource.currentPageNumber(in: document) == 4)
+        pageSource.protect(pageNumber: 4, in: document)
+        pageSource.detach(pdfView)
+
+        let recreatedPDFView = PDFView()
+        pageSource.attach(recreatedPDFView)
+        recreatedPDFView.document = document
+
+        #expect(pageSource.currentPageNumber(in: document) == 4)
+        #expect(pageSource.shouldIgnorePageChange(pageNumber: 1, in: document))
+        #expect(!pageSource.shouldIgnorePageChange(pageNumber: 4, in: document))
+
+        pageSource.clearPageProtection(in: document)
+        #expect(!pageSource.shouldIgnorePageChange(pageNumber: 1, in: document))
+    }
+
+    @Test func singlePageTurnsAdvanceOnePage() {
+        #expect(ReadingMode.singlePage.pageAfterTurn(from: 2, totalPages: 10, forward: true) == 3)
+        #expect(ReadingMode.singlePage.pageAfterTurn(from: 2, totalPages: 10, forward: false) == 1)
+        #expect(ReadingMode.singlePage.pageAfterTurn(from: 1, totalPages: 10, forward: false) == nil)
     }
 
     @Test func zoomPercentageLevelsExcludeFitModes() {

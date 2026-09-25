@@ -1,0 +1,9 @@
+{
+  "id" : "20ff8f29-2f39-4d54-accf-b23cdf9ec8f6",
+  "targets" : [
+    {
+      "id" : "C5AECB30-FE4E-45D7-876F-AAA798F9178E",
+      "name" : "PDFViewer"
+    }
+  ]
+}
