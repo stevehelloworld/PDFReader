@@ -306,6 +306,7 @@ struct ContentView: View {
                             }
                         }
                 }
+                .modifier(ReaderSheetPlacement())
             }
         }
         .sheet(isPresented: $showSidebar) {
@@ -328,6 +329,7 @@ struct ContentView: View {
                         }
                     }
                 }
+                .modifier(ReaderSheetPlacement())
             }
         }
     }
@@ -1366,6 +1368,21 @@ private extension View {
                     .onChange(of: proxy.size.width) { _, width in action(width) }
             }
         )
+    }
+}
+#endif
+
+#if os(iOS)
+/// Reader sheets (search, page browser) belong to the reader column. On iOS 27 the
+/// system can place them on the trailing side (the reader screen on iPhone Duo)
+/// instead of across the fold; earlier systems keep the default placement.
+private struct ReaderSheetPlacement: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 27.0, *) {
+            content.presentationPlacement(.trailing)
+        } else {
+            content
+        }
     }
 }
 #endif
