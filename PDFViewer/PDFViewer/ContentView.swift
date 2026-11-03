@@ -34,6 +34,12 @@ struct ContentView: View {
     @State private var showSearch = false
     @State private var showScrubber = true
     @State private var isFilePickerPresented = false
+    #if os(iOS)
+    @State private var iOSColumnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var columnVisibilityBeforeFullscreen: NavigationSplitViewVisibility?
+    @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
+    @AppStorage("librarySortOrder") private var librarySortOrderRaw = LibrarySortOrder.recent.rawValue
+    #endif
 
     // Search
     @State private var searchQuery = ""
@@ -241,19 +247,39 @@ struct ContentView: View {
 
     #if os(iOS)
     private var iOSRoot: some View {
-        NavigationStack {
-            readerContainer
-                .navigationTitle(currentFileName ?? "ComicPDFReader")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { iOSToolbar }
-                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .navigationBar)
-                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .bottomBar)
-                .statusBarHidden(isToolbarHidden)
-                .safeAreaInset(edge: .bottom) {
-                    if document != nil, !isToolbarHidden {
-                        iOSReaderControls
-                    }
-                }
+        NavigationSplitView(
+            columnVisibility: $iOSColumnVisibility,
+            preferredCompactColumn: $preferredCompactColumn
+        ) {
+            LibraryView(
+                historyManager: historyManager,
+                selectedFileID: currentFileID,
+                isLoading: isLoading,
+                sortOrder: librarySortOrder,
+                onOpen: openFile,
+                onOpenRecent: { file in openFromLibrary(file) },
+                onRemoveRecent: { historyManager.removeFile(id: $0.id) },
+                onClearRecents: { historyManager.clearAll() }
+            )
+            .navigationTitle(String(localized: "書庫"))
+            .navigationSplitViewColumnWidth(min: 280, ideal: 300, max: 320)
+            .toolbar { libraryToolbar }
+        } detail: {
+            iOSDetail
+        }
+        .navigationSplitViewStyle(.balanced)
+        .onChange(of: document != nil) { _, hasDocument in
+            preferredCompactColumn = hasDocument ? .detail : .sidebar
+        }
+        .onChange(of: isToolbarHidden) { _, hidden in
+            // Fullscreen reading also collapses the library column at regular width.
+            if hidden {
+                columnVisibilityBeforeFullscreen = iOSColumnVisibility
+                iOSColumnVisibility = .detailOnly
+            } else if let previous = columnVisibilityBeforeFullscreen {
+                iOSColumnVisibility = previous
+                columnVisibilityBeforeFullscreen = nil
+            }
         }
         .sheet(isPresented: $isFilePickerPresented) {
             DocumentPicker { url in
@@ -298,23 +324,81 @@ struct ContentView: View {
         }
     }
 
+    /// Right column: the reader, or an empty state when no book is selected.
+    @ViewBuilder
+    private var iOSDetail: some View {
+        if document == nil, !isLoading {
+            ContentUnavailableView {
+                Label(String(localized: "選一本開始讀"), systemImage: "books.vertical")
+            } description: {
+                Text(String(localized: "從左側書庫選擇一本 PDF。"))
+            }
+        } else {
+            readerContainer
+                .navigationTitle(currentFileName ?? "ComicPDFReader")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { iOSToolbar }
+                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .navigationBar)
+                .toolbar(isToolbarHidden ? .hidden : .automatic, for: .bottomBar)
+                .statusBarHidden(isToolbarHidden)
+                .safeAreaInset(edge: .bottom) {
+                    if document != nil, !isToolbarHidden {
+                        iOSReaderControls
+                    }
+                }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var libraryToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Menu {
+                Picker(String(localized: "排序"), selection: $librarySortOrderRaw) {
+                    ForEach(LibrarySortOrder.allCases) { order in
+                        Text(order.label).tag(order.rawValue)
+                    }
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+            }
+            .accessibilityLabel(String(localized: "排序"))
+
+            Button(action: openFile) {
+                Image(systemName: "doc.badge.plus")
+            }
+            .accessibilityLabel(String(localized: "匯入 PDF"))
+        }
+    }
+
+    private var librarySortOrder: LibrarySortOrder {
+        LibrarySortOrder(rawValue: librarySortOrderRaw) ?? .recent
+    }
+
+    /// Selecting the book that is already open only navigates; it never reloads,
+    /// so page and reading state survive.
+    private func openFromLibrary(_ file: RecentFile) {
+        if file.id == currentFileID, document != nil {
+            preferredCompactColumn = .detail
+            return
+        }
+        Task { await openRecent(file) }
+    }
+
+    /// Reader-column toolbar: reading tools only (library actions live in the left column).
     @ToolbarContentBuilder
     private var iOSToolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
+        ToolbarItemGroup(placement: .topBarTrailing) {
             if document != nil {
                 Button {
                     showSidebar = true
                 } label: {
-                    Label(String(localized: "側邊欄"), systemImage: "sidebar.left")
+                    Image(systemName: "square.grid.2x2")
                 }
-            }
-        }
-
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            if document != nil {
+                .accessibilityLabel(String(localized: "縮圖與目錄"))
                 Button { showSearch = true } label: {
                     Image(systemName: "magnifyingglass")
                 }
+                .accessibilityLabel(String(localized: "搜尋"))
                 Menu {
                     readingModeMenuContent
                     Toggle(String(localized: "連續捲動"), isOn: continuousSelection)
@@ -325,11 +409,8 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityLabel(String(localized: "閱讀設定"))
             }
-            Button(action: openFile) {
-                Image(systemName: "doc.badge.plus")
-            }
-            .accessibilityLabel(String(localized: "開啟檔案"))
         }
     }
 
