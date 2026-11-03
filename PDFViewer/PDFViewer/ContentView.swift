@@ -56,6 +56,12 @@ struct ContentView: View {
 
     @ObservedObject private var historyManager = PDFHistoryManager.shared
     @Environment(\.scenePhase) private var scenePhase
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+    @ScaledMetric(relativeTo: .body) private var pageFieldWidth: CGFloat = 48
+    @ScaledMetric(relativeTo: .body) private var toolbarPageFieldWidth: CGFloat = 44
+    @ScaledMetric(relativeTo: .body) private var zoomPickerWidth: CGFloat = 96
 
     var body: some View {
         Group {
@@ -325,38 +331,63 @@ struct ContentView: View {
         }
     }
 
+    private var isRegularWidth: Bool { horizontalSizeClass == .regular }
+
+    private var iOSPageField: some View {
+        HStack(spacing: 4) {
+            TextField(String(localized: "頁碼"), text: $pageInputText)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.center)
+                .frame(minWidth: pageFieldWidth, maxWidth: pageFieldWidth * 1.5)
+                .fixedSize(horizontal: true, vertical: false)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { submitPageInput() }
+
+            Text("/ \(totalPages)")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var iOSFullscreenButton: some View {
+        Button(action: toggleReaderChrome) {
+            Label(String(localized: "全螢幕閱讀"), systemImage: "arrow.up.left.and.arrow.down.right")
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: isRegularWidth ? nil : .infinity, minHeight: isRegularWidth ? 44 : 48)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityLabel(String(localized: "全螢幕閱讀"))
+    }
+
+    @ViewBuilder
     private var iOSReaderControls: some View {
-        VStack(spacing: 10) {
-            readingModeButtonSelector()
-
-            HStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    TextField(String(localized: "頁碼"), text: $pageInputText)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.center)
-                        .frame(width: 48)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { submitPageInput() }
-
-                    Text("/ \(totalPages)")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
+        Group {
+            if isRegularWidth {
+                // Regular width (iPad, large iPhone landscape): compact single row.
+                HStack(alignment: .center, spacing: 16) {
+                    readingModeButtonSelector(maxWidth: 560)
+                    Spacer(minLength: 8)
+                    iOSPageField
+                    iOSFullscreenButton
                 }
+                .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 10) {
+                    readingModeButtonSelector()
 
-                Spacer(minLength: 0)
-            }
+                    HStack(spacing: 8) {
+                        iOSPageField
+                        Spacer(minLength: 0)
+                    }
 
-            Button(action: toggleReaderChrome) {
-                Label(String(localized: "全螢幕閱讀"), systemImage: "arrow.up.left.and.arrow.down.right")
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 48)
+                    iOSFullscreenButton
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 8)
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityLabel(String(localized: "全螢幕閱讀"))
         }
         .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
         .background(.bar)
     }
 
@@ -456,7 +487,10 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(String(localized: "退出全螢幕閱讀"))
-                .padding(16)
+                // Overlay content already sits inside the safe area; add only a small
+                // inset from the top/trailing safe edges instead of a fixed symmetric 16pt.
+                .padding(.top, 8)
+                .padding(.trailing, 12)
                 .transition(.opacity)
             }
         }
@@ -571,7 +605,7 @@ struct ContentView: View {
 
             HStack(spacing: 4) {
                 TextField(String(localized: "頁碼"), text: $pageInputText)
-                    .frame(width: 44)
+                    .frame(width: toolbarPageFieldWidth)
                     .multilineTextAlignment(.center)
                     #if os(macOS)
                     .textFieldStyle(.roundedBorder)
@@ -653,7 +687,7 @@ struct ContentView: View {
                     Text(level.displayName).tag(level)
                 }
             }
-            .frame(width: 96)
+            .frame(width: zoomPickerWidth)
             .help(String(localized: "縮放比例"))
 
             Button(action: zoomIn) {

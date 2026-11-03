@@ -6,6 +6,12 @@ struct PageScrubber: View {
     @Binding var currentPage: Int
     let totalPages: Int
     var onSeek: (Int) -> Void
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var maxContentWidth: CGFloat { horizontalSizeClass == .regular ? 640 : .infinity }
+    #else
+    private let maxContentWidth: CGFloat = .infinity
+    #endif
 
     var body: some View {
         if totalPages > 1 {
@@ -24,8 +30,10 @@ struct PageScrubber: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
             .background(.bar)
         }
     }
@@ -66,6 +74,7 @@ struct LoadingOverlay: View {
 
     var body: some View {
         ZStack {
+            // Background dimming only; the progress card stays inside the safe area.
             Color.black.opacity(0.18)
                 .ignoresSafeArea()
             VStack(spacing: 12) {

@@ -92,13 +92,14 @@ struct RecentFileRow: View {
     var onDelete: (() -> Void)? = nil
 
     @State private var thumbnail: PlatformImage?
+    @ScaledMetric(relativeTo: .body) private var thumbnailWidth: CGFloat = 40
     @ObservedObject private var history = PDFHistoryManager.shared
 
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
                 thumbnailView
-                    .frame(width: 40, height: 56)
+                    .frame(width: thumbnailWidth, height: thumbnailWidth * 1.4)
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
