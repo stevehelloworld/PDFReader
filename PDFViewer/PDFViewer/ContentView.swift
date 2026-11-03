@@ -349,6 +349,7 @@ struct ContentView: View {
                 .navigationTitle(currentFileName ?? "ComicPDFReader")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { iOSToolbar }
+                .modifier(HorizontalReaderToolbar())
                 .toolbar(isToolbarHidden ? .hidden : .automatic, for: .navigationBar)
                 .toolbar(isToolbarHidden ? .hidden : .automatic, for: .bottomBar)
                 .statusBarHidden(isToolbarHidden)
@@ -473,7 +474,11 @@ struct ContentView: View {
             Text("/ \(totalPages)")
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+                .layoutPriority(1)
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var iOSFullscreenButton: some View {
@@ -1380,6 +1385,18 @@ private struct ReaderSheetPlacement: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 27.0, *) {
             content.presentationPlacement(.trailing)
+        } else {
+            content
+        }
+    }
+}
+
+/// iPhone Duo's narrow cover screen makes iOS 27.1+ stack trailing nav-bar items into a
+/// vertical column that collides with the status bar; keep the reader's bar horizontal.
+private struct HorizontalReaderToolbar: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 27.1, *) {
+            content.toolbarVerticalBehavior(.disabled)
         } else {
             content
         }
