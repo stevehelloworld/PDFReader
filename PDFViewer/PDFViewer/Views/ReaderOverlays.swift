@@ -8,14 +8,20 @@ struct PageScrubber: View {
     var onSeek: (Int) -> Void
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     private var maxContentWidth: CGFloat { horizontalSizeClass == .regular ? 640 : .infinity }
+    private var isCompactHeight: Bool { verticalSizeClass == .compact }
     #else
     private let maxContentWidth: CGFloat = .infinity
+    private let isCompactHeight = false
     #endif
 
     var body: some View {
         if totalPages > 1 {
-            VStack(spacing: 4) {
+            let layout = isCompactHeight
+                ? AnyLayout(HStackLayout(spacing: 12))
+                : AnyLayout(VStackLayout(spacing: 4))
+            layout {
                 Slider(
                     value: Binding(
                         get: { Double(currentPage) },
@@ -29,10 +35,17 @@ struct PageScrubber: View {
                 Text(String(localized: "第 \(currentPage) / \(totalPages) 頁"))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    #if os(iOS)
+                    // Caption is secondary; cap growth so the scrubber never climbs
+                    // into the navigation bar at accessibility sizes.
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                    .lineLimit(1)
+                    .fixedSize()
+                    #endif
             }
             .frame(maxWidth: maxContentWidth)
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, isCompactHeight ? 4 : 8)
             .frame(maxWidth: .infinity)
             .background(.bar)
         }

@@ -58,6 +58,8 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #endif
     @ScaledMetric(relativeTo: .body) private var pageFieldWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .body) private var toolbarPageFieldWidth: CGFloat = 44
@@ -359,10 +361,108 @@ struct ContentView: View {
         .accessibilityLabel(String(localized: "全螢幕閱讀"))
     }
 
+    private var isCompactHeight: Bool { verticalSizeClass == .compact }
+    private var isAccessibilityType: Bool { dynamicTypeSize.isAccessibilitySize }
+
+    /// Icon-only fullscreen toggle for the single-row layouts.
+    private var iOSFullscreenIconButton: some View {
+        Button(action: toggleReaderChrome) {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                // Fixed glyph size: the 44pt circle must not overflow at AX sizes;
+                // the large content viewer covers enlarged display.
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color.accentColor, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(String(localized: "全螢幕閱讀"))
+        .accessibilityShowsLargeContentViewer()
+    }
+
+    /// Inline icon buttons for the reading mode (compact height, default type sizes).
+    private var iOSInlineModeButtons: some View {
+        HStack(spacing: 6) {
+            ForEach(ReadingMode.allCases) { mode in
+                let isSelected = readingMode == mode
+                Button {
+                    selectReadingMode(mode)
+                } label: {
+                    readingModeSymbol(for: mode)
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(minWidth: 44, minHeight: 36)
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        .background(
+                            isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.045),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(mode.label)
+                .accessibilityHint(mode.description)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityShowsLargeContentViewer {
+                    readingModeSymbol(for: mode)
+                    Text(mode.label)
+                }
+            }
+        }
+    }
+
+    /// Reading mode collapsed into one icon-only Menu (accessibility type sizes).
+    private var iOSModeMenu: some View {
+        Menu {
+            readingModeMenuContent
+        } label: {
+            readingModeSymbol(for: readingMode)
+                .font(.system(size: 20, weight: .semibold))
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel(String(localized: "閱讀模式"))
+        .accessibilityValue(readingMode.label)
+        .accessibilityShowsLargeContentViewer {
+            readingModeSymbol(for: readingMode)
+            Text(readingMode.label)
+        }
+    }
+
     @ViewBuilder
     private var iOSReaderControls: some View {
         Group {
-            if isRegularWidth {
+            if isCompactHeight || isAccessibilityType {
+                // Single row: mode | page | fullscreen icon. Keeps PDF visible in
+                // landscape and keeps AX sizes on screen without scrolling.
+                HStack(alignment: .center, spacing: 12) {
+                    if isAccessibilityType {
+                        iOSModeMenu
+                    } else {
+                        iOSInlineModeButtons
+                    }
+                    if isCompactHeight, totalPages > 1 {
+                        // Landscape: the page scrubber joins this row instead of
+                        // taking its own band above it.
+                        Slider(
+                            value: Binding(
+                                get: { Double(currentPage) },
+                                set: { goToPage(Int($0.rounded())) }
+                            ),
+                            in: 1...Double(totalPages),
+                            step: 1
+                        )
+                        .controlSize(.small)
+                        .frame(minWidth: 120)
+                    } else {
+                        Spacer(minLength: 8)
+                    }
+                    iOSPageField
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+                    iOSFullscreenIconButton
+                }
+                .padding(.vertical, 4)
+                .frame(minHeight: 44, maxHeight: isAccessibilityType ? nil : 52)
+            } else if isRegularWidth {
                 // Regular width (iPad, large iPhone landscape): compact single row.
                 HStack(alignment: .center, spacing: 16) {
                     readingModeButtonSelector(maxWidth: 560)
@@ -559,10 +659,18 @@ struct ContentView: View {
             }
             .contentShape(Rectangle())
 
-            if showScrubber, !isToolbarHidden {
+            if showScrubber, !isToolbarHidden, !isScrubberInlineInControls {
                 PageScrubber(currentPage: $currentPage, totalPages: totalPages, onSeek: goToPage)
             }
         }
+    }
+
+    private var isScrubberInlineInControls: Bool {
+        #if os(iOS)
+        verticalSizeClass == .compact
+        #else
+        false
+        #endif
     }
 
     private func toggleReaderChrome() {
