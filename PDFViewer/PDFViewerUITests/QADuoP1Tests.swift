@@ -1,0 +1,105 @@
+#if os(iOS)
+import XCTest
+final class QADuoP1Tests: XCTestCase {
+    var env: [String: String] { ProcessInfo.processInfo.environment }
+    var out: String { env["QA_OUT"] ?? "/tmp/duo-p1" }
+    var tag: String { env["QA_TAG"] ?? "x" }
+    var app: XCUIApplication!
+    func shot(_ n: String) {
+        try? FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+        try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(out)/\(tag)-\(n).png"))
+    }
+    func write(_ s: String) {
+        let p = "\(out)/\(tag)-frames.txt"
+        if let h = FileHandle(forWritingAtPath: p) { h.seekToEndOfFile(); h.write(s.data(using: .utf8)!); h.closeFile() } else { try? s.write(toFile: p, atomically: true, encoding: .utf8) }
+    }
+    var page: String { let f = app.textFields.firstMatch; return f.exists ? (f.value as? String ?? "?") : "nofield" }
+    var mode: String {
+        for l in ["單頁", "雙頁左至右", "雙頁右至左"] { let b = app.buttons[l].firstMatch; if b.exists && b.isSelected { return l } }
+        let m = app.buttons["閱讀模式"].firstMatch; return m.exists ? "menu:\(m.value ?? "")" : "?"
+    }
+    func log(_ n: String, full: Bool = true) {
+        var s = "== \(tag) \(n) orient=\(XCUIDevice.shared.orientation.rawValue) win=\(app.windows.firstMatch.frame) page=\(page) mode=\(mode)\n"
+        for nb in app.navigationBars.allElementsBoundByIndex where nb.exists { s += "NAVBAR '\(nb.identifier)' \(nb.frame)\n" }
+        if full {
+            for q in [app.buttons, app.textFields, app.sliders, app.staticTexts] {
+                for e in q.allElementsBoundByIndex where e.exists { s += "\(e.elementType.rawValue) '\(e.label)' id='\(e.identifier)' val='\(e.value ?? "")' \(e.frame) hit=\(e.isHittable)\n" }
+            }
+        }
+        write(s)
+    }
+    /// Center of the PDF area: between the nav bar bottom and the top of the lowest control row, so the tap never lands on controls.
+    func pdfCenter() -> XCUICoordinate {
+        let win = app.windows.firstMatch.frame
+        var top = win.minY
+        for nb in app.navigationBars.allElementsBoundByIndex where nb.exists { top = max(top, nb.frame.maxY) }
+        var bottom = win.maxY
+        for q in [app.buttons, app.sliders, app.textFields] {
+            for e in q.allElementsBoundByIndex where e.exists && e.frame.minY > win.midY { bottom = min(bottom, e.frame.minY) }
+        }
+        let y = (top + bottom) / 2
+        write("pdfCenter top=\(top) bottom=\(bottom) tapY=\(y) win=\(win)\n")
+        return app.windows.firstMatch.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: win.midX - win.minX, dy: y - win.minY))
+    }
+    @MainActor func testP1Flow() throws {
+        app = XCUIApplication()
+        app.launchArguments = ["-recentPDFFiles_v2", "<5b7b226964223a202271612d73616d706c65222c202270617468223a20222f746d702f64756f2d70302f73616d706c652e706466222c20226e616d65223a202273616d706c652e706466222c20226c6173744f70656e6564223a203831353030303030302e302c202263757272656e7450616765223a20312c2022746f74616c5061676573223a20362c202272656164696e674d6f6465223a202273696e676c6550616765222c20226973436f6e74696e756f7573223a2066616c73652c2022617070656172616e6365223a20226175746f6d61746963222c20227a6f6f6d4c6576656c223a202266697450616765227d5d>"]
+        if let cs = env["QA_CS"] { app.launchArguments += ["-UIPreferredContentSizeCategoryName", cs] }
+        app.launch()
+        let orient: UIDeviceOrientation = env["QA_START"] == "land" ? .landscapeLeft : .portrait
+        XCUIDevice.shared.orientation = orient
+        sleep(2); shot("01-launch"); log("launch")
+        let row = app.buttons.containing(NSPredicate(format: "label CONTAINS 'sample'")).firstMatch
+        if !row.isHittable { XCUIDevice.shared.orientation = .portrait; sleep(1) }
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap(); sleep(3)
+        shot("02-reader"); log("reader")
+        // go to page 3 via field
+        let f = app.textFields.firstMatch
+        _ = f
+        let pdfArea = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        for _ in 0..<2 { pdfArea.press(forDuration: 0.05, thenDragTo: app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.45))); sleep(2) }
+        shot("03-page3"); log("page3", full: false)
+        for (o, n) in [(UIDeviceOrientation.landscapeLeft, "landL"), (.portrait, "portrait"), (.landscapeRight, "landR")] {
+            XCUIDevice.shared.orientation = o; sleep(3); shot("04-\(n)"); log("rot-\(n)")
+        }
+        if env["QA_SPLIT"] != nil {
+            XCUIDevice.shared.orientation = .landscapeLeft; sleep(3)
+            let toggle = app.buttons.matching(NSPredicate(format: "identifier CONTAINS[c] 'sidebar' OR label CONTAINS[c] 'sidebar' OR label CONTAINS '側邊欄'")).firstMatch
+            for i in 1...2 {
+                shot("07-split-before-toggle\(i)"); log("split-before-toggle\(i) toggleExists=\(toggle.exists) '\(toggle.label)'", full: i == 1)
+                if toggle.exists { toggle.tap(); sleep(3) }
+                shot("07-split-after-toggle\(i)"); log("split-after-toggle\(i)", full: false)
+                let t2 = app.buttons.matching(NSPredicate(format: "identifier CONTAINS[c] 'sidebar' OR label CONTAINS[c] 'sidebar' OR label CONTAINS '側邊欄'")).firstMatch
+                if t2.exists && i == 1 { write("toggle2 '\(t2.label)' id='\(t2.identifier)'\n") }
+                if !t2.exists && i == 1 { app.swipeRight(); sleep(2) }
+            }
+            // Manual pick wins: choose single page while spread is allowed.
+            let single = app.buttons["單頁"].firstMatch
+            if single.exists && single.isHittable { single.tap(); sleep(2); if toggle.exists { toggle.tap(); sleep(3) }; shot("08-manual-single"); log("manual-single then toggle", full: false) }
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft; sleep(2)
+        pdfCenter().tap(); sleep(2)
+        shot("05-tap-hide"); log("tap-hide navbars=\(app.navigationBars.count) exit=\(app.buttons["退出全螢幕閱讀"].exists)", full: false)
+        pdfCenter().tap(); sleep(2)
+        shot("06-tap-show"); log("tap-show navbars=\(app.navigationBars.count) fs=\(app.buttons["全螢幕閱讀"].exists)", full: false)
+        pdfCenter().doubleTap(); sleep(2)
+        log("after-doubletap navbars=\(app.navigationBars.count)", full: false)
+        XCUIDevice.shared.orientation = .portrait; sleep(2)
+        if env["QA_SHEETS"] != nil {
+            for (o, n) in [(UIDeviceOrientation.portrait, "p"), (.landscapeLeft, "l")] {
+                XCUIDevice.shared.orientation = o; sleep(2)
+                for (label, key) in [("搜尋", "search"), ("縮圖與目錄", "browse")] {
+                    let b = app.buttons[label].firstMatch
+                    guard b.waitForExistence(timeout: 3), b.isHittable else { write("sheet \(key)-\(n) button missing\n"); continue }
+                    b.tap(); sleep(2)
+                    shot("09-sheet-\(key)-\(n)"); log("sheet-\(key)-\(n)")
+                    let done = app.buttons.matching(NSPredicate(format: "label IN {'完成', 'Done', '關閉', 'Close', '取消', 'Cancel'}")).firstMatch
+                    if done.exists && done.isHittable { done.tap() } else { app.swipeDown(velocity: .fast) }
+                    sleep(2)
+                }
+            }
+            XCUIDevice.shared.orientation = .portrait; sleep(1)
+        }
+    }
+}
+#endif
