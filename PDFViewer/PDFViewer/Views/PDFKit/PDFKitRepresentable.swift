@@ -201,6 +201,10 @@ struct PDFKitView: View {
     var onSelectionConsumed: () -> Void
     var onPrevious: () -> Void
     var onNext: () -> Void
+    /// iOS only: single tap on the page (not a link, not ending a selection, not part of a double tap).
+    var onSingleTap: (() -> Void)? = nil
+    /// iOS only: double tap on the page.
+    var onDoubleTap: (() -> Void)? = nil
 
     var body: some View {
         GeometryReader { proxy in
@@ -234,7 +238,9 @@ struct PDFKitView: View {
                 pendingSelection: pendingSelection,
                 onSelectionConsumed: onSelectionConsumed,
                 onPrevious: onPrevious,
-                onNext: onNext
+                onNext: onNext,
+                onSingleTap: onSingleTap,
+                onDoubleTap: onDoubleTap
             )
             #endif
         }
@@ -533,6 +539,8 @@ struct iOS_PDFKitView: UIViewRepresentable {
     var onSelectionConsumed: () -> Void
     let onPrevious: () -> Void
     let onNext: () -> Void
+    let onSingleTap: (() -> Void)?
+    let onDoubleTap: (() -> Void)?
 
     func makeUIView(context: Context) -> PDFView {
         let pdfView = PDFView()
@@ -555,6 +563,29 @@ struct iOS_PDFKitView: UIViewRepresentable {
         horizontalPan.cancelsTouchesInView = false
         horizontalPan.maximumNumberOfTouches = 1
         pdfView.addGestureRecognizer(horizontalPan)
+
+        // Chrome toggle. Waits for any double-tap (PDFKit zoom, ours) to fail via the
+        // delegate, never cancels touches, and skips links and active text selections.
+        let singleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleSingleTap(_:))
+        )
+        singleTap.numberOfTapsRequired = 1
+        singleTap.cancelsTouchesInView = false
+        singleTap.delegate = context.coordinator
+        context.coordinator.singleTap = singleTap
+        pdfView.addGestureRecognizer(singleTap)
+
+        // Replaces the SwiftUI TapGesture(count: 2), whose bridged recognizer never
+        // failed in time and so blocked the single tap above.
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:))
+        )
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.cancelsTouchesInView = false
+        doubleTap.delegate = context.coordinator
+        pdfView.addGestureRecognizer(doubleTap)
 
         return pdfView
     }
@@ -735,6 +766,43 @@ struct iOS_PDFKitView: UIViewRepresentable {
             }
         }
 
+        weak var singleTap: UITapGestureRecognizer?
+        private var selectionAtTouch = false
+
+        @objc func handleSingleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, !isDismantled, !selectionAtTouch else { return }
+            parent.onSingleTap?()
+        }
+
+        @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, !isDismantled else { return }
+            parent.onDoubleTap?()
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard gestureRecognizer === singleTap, let pdfView = gestureRecognizer.view as? PDFView else { return true }
+            // A tap that dismisses a text selection should only dismiss it.
+            selectionAtTouch = !(pdfView.currentSelection?.string ?? "").isEmpty
+            let point = touch.location(in: pdfView)
+            if let page = pdfView.page(for: point, nearest: false) {
+                let pagePoint = pdfView.convert(point, to: page)
+                if let annotation = page.annotation(at: pagePoint),
+                   annotation.url != nil || annotation.action != nil {
+                    return false
+                }
+            }
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard gestureRecognizer === singleTap,
+                  let tap = otherGestureRecognizer as? UITapGestureRecognizer else { return false }
+            return tap.numberOfTapsRequired >= 2
+        }
+
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
                   let view = pan.view else { return true }
@@ -836,3 +904,4 @@ struct DocumentPicker: UIViewControllerRepresentable {
     }
 }
 #endif
+

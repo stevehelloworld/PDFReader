@@ -35,10 +35,16 @@ struct ContentView: View {
     @State private var showScrubber = true
     @State private var isFilePickerPresented = false
     #if os(iOS)
-    @State private var iOSColumnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var iOSColumnVisibility: NavigationSplitViewVisibility = .all
     @State private var columnVisibilityBeforeFullscreen: NavigationSplitViewVisibility?
     @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
     @AppStorage("librarySortOrder") private var librarySortOrderRaw = LibrarySortOrder.recent.rawValue
+    /// True once the user explicitly picks a reading mode for this book; auto spread then stays off.
+    @State private var isModeUserPinned = false
+    /// The book's own (saved or user-picked) mode; auto spread never overwrites it on disk.
+    @State private var userModeBaseline: ReadingMode = .singlePage
+    @State private var readerWidth: CGFloat = 0
+    @State private var windowWidth: CGFloat = 0
     #endif
 
     // Search
@@ -268,6 +274,8 @@ struct ContentView: View {
             iOSDetail
         }
         .navigationSplitViewStyle(.balanced)
+        .onGeometryWidthChange { windowWidth = $0; applyAutoSpread() }
+        .onChange(of: horizontalSizeClass) { _, _ in applyAutoSpread() }
         .onChange(of: document != nil) { _, hasDocument in
             preferredCompactColumn = hasDocument ? .detail : .sidebar
         }
@@ -335,6 +343,7 @@ struct ContentView: View {
             }
         } else {
             readerContainer
+                .onGeometryWidthChange { readerWidth = $0; applyAutoSpread() }
                 .navigationTitle(currentFileName ?? "ComicPDFReader")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { iOSToolbar }
@@ -342,7 +351,8 @@ struct ContentView: View {
                 .toolbar(isToolbarHidden ? .hidden : .automatic, for: .bottomBar)
                 .statusBarHidden(isToolbarHidden)
                 .safeAreaInset(edge: .bottom) {
-                    if document != nil, !isToolbarHidden {
+                    if document != nil, !isToolbarHidden, !isCompactHeight {
+                        // Compact height: controls live in the navigation bar instead.
                         iOSReaderControls
                     }
                 }
@@ -387,7 +397,39 @@ struct ContentView: View {
     /// Reader-column toolbar: reading tools only (library actions live in the left column).
     @ToolbarContentBuilder
     private var iOSToolbar: some ToolbarContent {
+        if document != nil, isCompactHeight {
+            // Compact height (iPhone landscape): reader controls merge into the nav bar,
+            // so there is one bar to hide and the PDF keeps the rest of the screen.
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 10) {
+                    if totalPages > 1 {
+                        Slider(
+                            value: Binding(
+                                get: { Double(currentPage) },
+                                set: { goToPage(Int($0.rounded())) }
+                            ),
+                            in: 1...Double(totalPages),
+                            step: 1
+                        )
+                        .controlSize(.small)
+                        .frame(minWidth: 120, maxWidth: 240)
+                        .accessibilityLabel(String(localized: "頁碼"))
+                    }
+                    iOSPageField
+                        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                }
+            }
+        }
         ToolbarItemGroup(placement: .topBarTrailing) {
+            if document != nil, isCompactHeight {
+                iOSModeMenu
+                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                Button(action: toggleReaderChrome) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                }
+                .accessibilityLabel(String(localized: "全螢幕閱讀"))
+                .accessibilityShowsLargeContentViewer()
+            }
             if document != nil {
                 Button {
                     showSidebar = true
@@ -716,11 +758,14 @@ struct ContentView: View {
                     pendingSelection: pendingSelection,
                     onSelectionConsumed: { pendingSelection = nil },
                     onPrevious: goToPreviousPage,
-                    onNext: goToNextPage
+                    onNext: goToNextPage,
+                    onSingleTap: toggleReaderChrome,
+                    onDoubleTap: handleReaderDoubleTap
                 )
                 #if os(iOS)
                 .id("\(readingMode.rawValue)-\(isContinuous)")
                 #endif
+                #if os(macOS)
                 .simultaneousGesture(
                     TapGesture(count: 2)
                         .exclusively(before: TapGesture(count: 1))
@@ -728,13 +773,12 @@ struct ContentView: View {
                             switch result {
                             case .first:
                                 toggleReaderChrome()
-                            case .second where readingMode.isBookMode && !isContinuous:
-                                goToNextPage()
                             case .second:
-                                break
+                                handleReaderDoubleTap()
                             }
                         }
                 )
+                #endif
                 .compositingGroup()
                 .overlay { AppearanceFilterOverlay(appearance: appearance) }
             }
@@ -752,6 +796,12 @@ struct ContentView: View {
         #else
         false
         #endif
+    }
+
+    private func handleReaderDoubleTap() {
+        if readingMode.isBookMode && !isContinuous {
+            goToNextPage()
+        }
     }
 
     private func toggleReaderChrome() {
@@ -917,10 +967,32 @@ struct ContentView: View {
     }
 
     private func selectReadingMode(_ mode: ReadingMode) {
+        #if os(iOS)
+        // Any explicit choice (even re-picking the current mode) pins it for this book.
+        isModeUserPinned = true
+        userModeBaseline = mode
+        #endif
         guard mode != readingMode else { return }
         captureVisiblePage()
         readingMode = mode
     }
+
+    #if os(iOS)
+    /// Auto two-page: see `AutoSpreadPolicy`. Keeps the visible page.
+    private func applyAutoSpread() {
+        guard document != nil,
+              let mode = AutoSpreadPolicy.mode(
+                  readerWidth: readerWidth,
+                  windowWidth: windowWidth,
+                  isRegularWidth: horizontalSizeClass == .regular,
+                  userPinnedMode: isModeUserPinned,
+                  spreadPreference: userModeBaseline
+              ),
+              mode != readingMode else { return }
+        captureVisiblePage()
+        readingMode = mode
+    }
+    #endif
 
     private func selectContinuousMode(_ isContinuous: Bool) {
         guard isContinuous != self.isContinuous else { return }
@@ -1187,6 +1259,12 @@ struct ContentView: View {
 
         isToolbarHidden = false
         showScrubber = true
+        #if os(iOS)
+        isModeUserPinned = false
+        userModeBaseline = readingMode
+        preferredCompactColumn = .detail
+        applyAutoSpread()
+        #endif
     }
 
     private func presentError(_ error: Error) {
@@ -1215,11 +1293,20 @@ struct ContentView: View {
             id: id,
             currentPage: currentPage,
             totalPages: totalPages,
-            readingMode: readingMode,
+            readingMode: persistedReadingMode,
             isContinuous: isContinuous,
             appearance: appearance,
             zoomLevel: currentZoom
         )
+    }
+
+    /// iOS saves the book's own mode, not a layout picked by auto spread.
+    private var persistedReadingMode: ReadingMode {
+        #if os(iOS)
+        userModeBaseline
+        #else
+        readingMode
+        #endif
     }
 
     // MARK: - Drag & drop (macOS)
@@ -1267,3 +1354,18 @@ struct ContentView_Previews: PreviewProvider {
         ContentView()
     }
 }
+
+#if os(iOS)
+private extension View {
+    /// Reports this view's laid-out width (iOS 17 compatible; no onGeometryChange).
+    func onGeometryWidthChange(_ action: @escaping (CGFloat) -> Void) -> some View {
+        background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { action(proxy.size.width) }
+                    .onChange(of: proxy.size.width) { _, width in action(width) }
+            }
+        )
+    }
+}
+#endif

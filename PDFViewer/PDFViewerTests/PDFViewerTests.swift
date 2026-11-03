@@ -128,3 +128,24 @@ struct PDFViewerTests {
         _ = json
     }
 }
+
+struct AutoSpreadPolicyTests {
+    @Test func spreadsOnlyWhenWideAndSidebarHidden() {
+        // Wide reader, sidebar collapsed: spread, keeping RTL preference.
+        #expect(AutoSpreadPolicy.mode(readerWidth: 800, windowWidth: 800, isRegularWidth: true,
+                                      userPinnedMode: false, spreadPreference: .twoPagesRTL) == .twoPagesRTL)
+        #expect(AutoSpreadPolicy.mode(readerWidth: 800, windowWidth: 800, isRegularWidth: true,
+                                      userPinnedMode: false, spreadPreference: .singlePage) == .twoPagesLTR)
+        // Sidebar open (reader narrower than window): back to single page.
+        #expect(AutoSpreadPolicy.mode(readerWidth: 860, windowWidth: 1180, isRegularWidth: true,
+                                      userPinnedMode: false, spreadPreference: .twoPagesRTL) == .singlePage)
+        // Too narrow.
+        #expect(AutoSpreadPolicy.mode(readerWidth: 600, windowWidth: 600, isRegularWidth: true,
+                                      userPinnedMode: false, spreadPreference: .twoPagesLTR) == .singlePage)
+        // Manual choice wins; compact width has no opinion.
+        #expect(AutoSpreadPolicy.mode(readerWidth: 900, windowWidth: 900, isRegularWidth: true,
+                                      userPinnedMode: true, spreadPreference: .twoPagesLTR) == nil)
+        #expect(AutoSpreadPolicy.mode(readerWidth: 874, windowWidth: 874, isRegularWidth: false,
+                                      userPinnedMode: false, spreadPreference: .twoPagesLTR) == nil)
+    }
+}
