@@ -81,7 +81,16 @@ final class QADuoP1Tests: XCTestCase {
                 hits.append("app \(e.elementType.rawValue) '\(e.label)' \(e.frame)")
             }
         }
-        write("FOLDBAND \(key) hittable=\(hits)\n")
+        // Known exception (QA-accepted): the reader's page slider spans the fold; report it, don't fail on it.
+        var exceptions: [String] = []
+        for e in app.sliders.allElementsBoundByIndex where e.exists && onBand(e.frame, band) && e.isHittable {
+            exceptions.append("app slider '\(e.label)' val='\(e.value ?? "")' \(e.frame)")
+        }
+        write("FOLDBAND \(key) hittable=\(hits) knownException=\(exceptions)\n")
+        if !exceptions.isEmpty {
+            let note = XCTAttachment(string: exceptions.joined(separator: "\n"))
+            note.name = "fold-band known exception (\(key)): page slider"; note.lifetime = .keepAlways; add(note)
+        }
         XCTAssertTrue(hits.isEmpty, "\(key): hittable on fold band \(band): \(hits)")
     }
     /// `TEST_RUNNER_QA_SHEET_CENTER=1` (iPad / iPhone without a fold): the sheet is the centered system sheet.
