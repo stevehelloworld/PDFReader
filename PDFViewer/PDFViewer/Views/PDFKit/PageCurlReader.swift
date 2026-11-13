@@ -271,6 +271,11 @@ final class PageCurlBookViewController: UIViewController, UIPageViewControllerDa
         pvc.isDoubleSided = layout.mode.isBookMode
         pvc.dataSource = self
         pvc.delegate = self
+        // Leaves must be in place before the view reaches a window: UIPageViewController
+        // asks for the spine (see spineLocationFor) in viewWillAppear.
+        if layout.screenCount > 0 {
+            pvc.setViewControllers(leaves(forScreen: displayedScreen), direction: .forward, animated: false)
+        }
         addChild(pvc)
         pvc.view.frame = view.bounds
         pvc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -282,9 +287,6 @@ final class PageCurlBookViewController: UIViewController, UIPageViewControllerDa
             recognizer.isEnabled = false
         }
         pageController = pvc
-        if layout.screenCount > 0 {
-            pvc.setViewControllers(leaves(forScreen: displayedScreen), direction: .forward, animated: false)
-        }
     }
 
     private func leaves(forScreen screen: Int) -> [UIViewController] {
@@ -387,7 +389,7 @@ final class PageCurlBookViewController: UIViewController, UIPageViewControllerDa
             self.isInSizeTransition = false
             if let r = self.pendingReset {
                 self.pendingReset = nil
-                self.reset(document: r.document, mode: r.mode, page: r.page)
+                DispatchQueue.main.async { self.reset(document: r.document, mode: r.mode, page: r.page) }
             }
         }
     }
@@ -403,6 +405,28 @@ final class PageCurlBookViewController: UIViewController, UIPageViewControllerDa
             pendingReset = (document, mode, page)
             return
         }
+        // Also catches transitions this controller was not told about (SwiftUI may
+        // update the representable from inside the rotation's animation block).
+        if let coordinator = transitionCoordinator ?? parent?.transitionCoordinator {
+            pendingReset = (document, mode, page)
+            isInSizeTransition = true
+            coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+                guard let self else { return }
+                self.isInSizeTransition = false
+                if let r = self.pendingReset {
+                    self.pendingReset = nil
+                    DispatchQueue.main.async { self.reset(document: r.document, mode: r.mode, page: r.page) }
+                }
+            }
+            return
+        }
+        UIView.performWithoutAnimation { rebuild(document: document, mode: mode, page: page) }
+    }
+
+    private func rebuild(document: PDFDocument, mode: ReadingMode, page: Int) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         if document !== renderer.document { renderer = PageCurlRenderer(document: document) }
         layout = PageCurlLayout(pageCount: document.pageCount, mode: mode)
         displayedScreen = layout.screen(containing: page) ?? 0
@@ -435,6 +459,18 @@ final class PageCurlBookViewController: UIViewController, UIPageViewControllerDa
     }
 
     // MARK: UIPageViewControllerDelegate
+
+    /// Called when the page controller appears and on every interface rotation. Without
+    /// it UIKit falls back to a .min spine, which breaks a double-sided .mid book
+    /// (mismatched leaf count; the rotation never finishes). Keep our spine and leaves.
+    func pageViewController(_ pvc: UIPageViewController, spineLocationFor orientation: UIInterfaceOrientation) -> UIPageViewController.SpineLocation {
+        let isBook = layout.mode.isBookMode
+        pvc.isDoubleSided = isBook
+        if layout.screenCount > 0 {
+            pvc.setViewControllers(leaves(forScreen: displayedScreen), direction: .forward, animated: false)
+        }
+        return isBook ? .mid : .min
+    }
 
     func pageViewController(_ pvc: UIPageViewController, willTransitionTo pendingViewControllers: [UIViewController]) {
         isUserTurning = true
