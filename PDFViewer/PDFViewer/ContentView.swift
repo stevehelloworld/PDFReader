@@ -756,7 +756,9 @@ struct ContentView: View {
             ZStack {
                 readerSurface(document: document)
                 #if os(iOS)
-                .id("\(readingMode.rawValue)-\(isContinuous)-\(usesPageCurl ? "curl" : "pdfview")")
+                // The curl book rebuilds itself on mode changes (and defers that past a rotation);
+                // only PDFView is recreated per mode.
+                .id(usesPageCurl ? "curl" : "\(readingMode.rawValue)-\(isContinuous)-pdfview")
                 #endif
                 #if os(macOS)
                 .simultaneousGesture(

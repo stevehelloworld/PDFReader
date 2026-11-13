@@ -348,6 +348,7 @@ final class PageCurlBookViewController: UIViewController, UIPageViewControllerDa
 
     /// Shows the screen containing `page`. Adjacent screens curl; jumps do not.
     func show(page: Int) {
+        if pendingReset != nil { pendingReset?.page = page; return }
         guard let target = layout.screen(containing: page), target != displayedScreen else { return }
         guard !isUserTurning, !isAnimatingProgrammatic else { pendingPage = page; return }
         let adjacent = abs(target - displayedScreen) == 1 && view.window != nil && !UIAccessibility.isReduceMotionEnabled
@@ -375,8 +376,33 @@ final class PageCurlBookViewController: UIViewController, UIPageViewControllerDa
         onPageSettled?(page)
     }
 
-    /// Rebuilds for a new document or mode, keeping `page`.
+    private var isInSizeTransition = false
+    private var pendingReset: (document: PDFDocument, mode: ReadingMode, page: Int)?
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        isInSizeTransition = true
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard let self else { return }
+            self.isInSizeTransition = false
+            if let r = self.pendingReset {
+                self.pendingReset = nil
+                self.reset(document: r.document, mode: r.mode, page: r.page)
+            }
+        }
+    }
+
+    /// Mode the book shows, or will show once a pending rebuild runs.
+    var targetMode: ReadingMode { pendingReset?.mode ?? layout.mode }
+
+    /// Rebuilds for a new document or mode, keeping `page`. Swapping the child page
+    /// controller mid-rotation leaves UIKit's transition unfinished, so a rebuild
+    /// requested during a size transition waits for it to complete.
     func reset(document: PDFDocument, mode: ReadingMode, page: Int) {
+        if isInSizeTransition {
+            pendingReset = (document, mode, page)
+            return
+        }
         if document !== renderer.document { renderer = PageCurlRenderer(document: document) }
         layout = PageCurlLayout(pageCount: document.pageCount, mode: mode)
         displayedScreen = layout.screen(containing: page) ?? 0
@@ -505,7 +531,7 @@ struct PageCurlReaderView: UIViewControllerRepresentable {
         book.onZoomRequest = { level in zoom.wrappedValue = level }
         book.leafBackground = Self.background(for: appearance)
 
-        if book.document !== document || book.layout.mode != readingMode {
+        if book.document !== document || book.targetMode != readingMode {
             book.reset(document: document, mode: readingMode, page: currentPage)
         }
         if let selection = pendingSelection {
