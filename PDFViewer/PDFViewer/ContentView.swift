@@ -49,6 +49,8 @@ struct ContentView: View {
     @State private var foldDivision: CGRect?
     /// Pinned spread that `FoldLayoutPolicy` swapped for single page when the user reopened the library.
     @State private var foldForcedSingleFrom: ReadingMode?
+    /// Global frame of the reader control bar, to keep its buttons off the fold.
+    @State private var controlsBarFrame: CGRect = .zero
     #endif
 
     // Search
@@ -607,6 +609,8 @@ struct ContentView: View {
                 }
                 .padding(.vertical, 4)
                 .frame(minHeight: 44, maxHeight: isAccessibilityType ? nil : 52)
+            } else if isRegularWidth, let fold = foldAcrossControls {
+                foldSplitControls(fold: fold)
             } else if isRegularWidth {
                 // Regular width (iPad, large iPhone landscape): compact single row.
                 HStack(alignment: .center, spacing: 16) {
@@ -634,6 +638,63 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
         .background(.bar)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { controlsBarFrame = proxy.frame(in: .global) }
+                    .onChange(of: proxy.frame(in: .global)) { _, frame in controlsBarFrame = frame }
+            }
+        )
+    }
+
+    /// Room kept clear on each side of the fold.
+    private static let foldControlMargin: CGFloat = 8
+    private static let controlsHorizontalPadding: CGFloat = 12
+
+    /// The fold, when it runs through the control row; nil on every other display.
+    private var foldAcrossControls: CGRect? {
+        guard let foldDivision, controlsBarFrame.width > 0 else { return nil }
+        let rowMinX = controlsBarFrame.minX + Self.controlsHorizontalPadding
+        let rowMaxX = controlsBarFrame.maxX - Self.controlsHorizontalPadding
+        return foldDivision.maxX > rowMinX && foldDivision.minX < rowMaxX ? foldDivision : nil
+    }
+
+    /// Fold displays: the control row splits into a group on each side of the fold so
+    /// nothing tappable sits on it. The reading modes stay together on whichever side fits.
+    private func foldSplitControls(fold: CGRect) -> some View {
+        let margin = Self.foldControlMargin
+        let leftWidth = max(0, fold.minX - margin - (controlsBarFrame.minX + Self.controlsHorizontalPadding))
+        let modesOnLeft = leftWidth >= 300
+        let pageFieldOnLeft = !modesOnLeft && leftWidth >= 120
+        return HStack(alignment: .center, spacing: 0) {
+            HStack(spacing: 12) {
+                if modesOnLeft {
+                    readingModeButtonSelector()
+                } else if pageFieldOnLeft {
+                    iOSPageField
+                }
+            }
+            .frame(width: leftWidth, alignment: .leading)
+
+            // The fold itself: nothing tappable here.
+            Color.clear
+                .frame(width: fold.width + margin * 2, height: 1)
+                .accessibilityHidden(true)
+
+            HStack(spacing: 12) {
+                if modesOnLeft {
+                    Spacer(minLength: 0)
+                    iOSPageField
+                    iOSFullscreenButton
+                } else {
+                    readingModeButtonSelector()
+                    if !pageFieldOnLeft { iOSPageField }
+                    iOSFullscreenIconButton
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.vertical, 8)
     }
 
     #endif
