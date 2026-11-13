@@ -72,6 +72,7 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #endif
     @ScaledMetric(relativeTo: .body) private var pageFieldWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .body) private var toolbarPageFieldWidth: CGFloat = 44
@@ -753,24 +754,9 @@ struct ContentView: View {
     private func readerStack(document: PDFDocument) -> some View {
         VStack(spacing: 0) {
             ZStack {
-                PDFKitView(
-                    document: document,
-                    pageSource: pdfViewPageSource,
-                    readingMode: $readingMode,
-                    isContinuous: $isContinuous,
-                    currentPage: $currentPage,
-                    pageInputText: $pageInputText,
-                    zoomLevel: $currentZoom,
-                    appearance: $appearance,
-                    pendingSelection: pendingSelection,
-                    onSelectionConsumed: { pendingSelection = nil },
-                    onPrevious: goToPreviousPage,
-                    onNext: goToNextPage,
-                    onSingleTap: toggleReaderChrome,
-                    onDoubleTap: handleReaderDoubleTap
-                )
+                readerSurface(document: document)
                 #if os(iOS)
-                .id("\(readingMode.rawValue)-\(isContinuous)")
+                .id("\(readingMode.rawValue)-\(isContinuous)-\(usesPageCurl ? "curl" : "pdfview")")
                 #endif
                 #if os(macOS)
                 .simultaneousGesture(
@@ -795,6 +781,57 @@ struct ContentView: View {
                 PageScrubber(currentPage: $currentPage, totalPages: totalPages, onSeek: goToPage)
             }
         }
+    }
+
+    #if os(iOS)
+    /// Book page curl at fit-page zoom; PDFView for zoomed, continuous, or Reduce Motion.
+    private var usesPageCurl: Bool {
+        PageCurlLayout.usesPageCurl(isContinuous: isContinuous, zoom: currentZoom, reduceMotion: reduceMotion)
+    }
+    #endif
+
+    @ViewBuilder
+    private func readerSurface(document: PDFDocument) -> some View {
+        #if os(iOS)
+        if usesPageCurl {
+            PageCurlReaderView(
+                document: document,
+                pageSource: pdfViewPageSource,
+                readingMode: readingMode,
+                currentPage: $currentPage,
+                pageInputText: $pageInputText,
+                zoomLevel: $currentZoom,
+                appearance: appearance,
+                pendingSelection: pendingSelection,
+                onSelectionConsumed: { pendingSelection = nil },
+                onSingleTap: toggleReaderChrome,
+                onDoubleTap: handleReaderDoubleTap
+            )
+        } else {
+            pdfKitSurface(document: document)
+        }
+        #else
+        pdfKitSurface(document: document)
+        #endif
+    }
+
+    private func pdfKitSurface(document: PDFDocument) -> some View {
+        PDFKitView(
+            document: document,
+            pageSource: pdfViewPageSource,
+            readingMode: $readingMode,
+            isContinuous: $isContinuous,
+            currentPage: $currentPage,
+            pageInputText: $pageInputText,
+            zoomLevel: $currentZoom,
+            appearance: $appearance,
+            pendingSelection: pendingSelection,
+            onSelectionConsumed: { pendingSelection = nil },
+            onPrevious: goToPreviousPage,
+            onNext: goToNextPage,
+            onSingleTap: toggleReaderChrome,
+            onDoubleTap: handleReaderDoubleTap
+        )
     }
 
     private var isScrubberInlineInControls: Bool {
