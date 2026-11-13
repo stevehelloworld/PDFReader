@@ -128,7 +128,13 @@ final class PageCurlLeafViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = leafBackground
         imageView.contentMode = .scaleToFill
-        imageView.clipsToBounds = true
+        // Faint page shadow like PDFView's. Path-based (shadowPath set in layout), so no
+        // offscreen pass; the image fills the frame exactly, so no clipping is needed.
+        imageView.clipsToBounds = false
+        imageView.layer.shadowColor = UIColor.black.cgColor
+        imageView.layer.shadowOpacity = 0.18
+        imageView.layer.shadowRadius = 3
+        imageView.layer.shadowOffset = CGSize(width: 0, height: 1)
         imageView.isAccessibilityElement = false
         view.addSubview(imageView)
     }
@@ -158,6 +164,7 @@ final class PageCurlLeafViewController: UIViewController {
         guard let page, let size = renderer.displaySize(of: page) else { imageView.frame = .zero; return }
         let frame = Self.pageFrame(pageSize: size, in: view.bounds, spineEdge: spineEdge)
         imageView.frame = frame
+        imageView.layer.shadowPath = UIBezierPath(rect: imageView.bounds).cgPath
         let scale = view.window?.screen.scale ?? traitCollection.displayScale
         let px = PageCurlRenderer.pixelSize(for: frame.size, scale: max(scale, 1))
         guard px != requestedPixelSize, frame.width > 1 else { return }
