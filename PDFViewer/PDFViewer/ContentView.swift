@@ -45,6 +45,10 @@ struct ContentView: View {
     @State private var userModeBaseline: ReadingMode = .singlePage
     @State private var readerWidth: CGFloat = 0
     @State private var windowWidth: CGFloat = 0
+    /// The display's fold in global coordinates (iOS 27.1+ `.division` region); nil elsewhere.
+    @State private var foldDivision: CGRect?
+    /// Pinned spread that `FoldLayoutPolicy` swapped for single page when the user reopened the library.
+    @State private var foldForcedSingleFrom: ReadingMode?
     #endif
 
     // Search
@@ -277,6 +281,16 @@ struct ContentView: View {
         .navigationSplitViewStyle(.balanced)
         .onGeometryWidthChange { windowWidth = $0; applyAutoSpread() }
         .onChange(of: horizontalSizeClass) { _, _ in applyAutoSpread() }
+        .modifier(FoldDivisionReader { foldDivision = $0 })
+        .onChange(of: foldDivision) { _, _ in applyFoldLayout(.layoutChanged) }
+        .onChange(of: readingMode) { _, _ in applyFoldLayout(.layoutChanged) }
+        .onChange(of: iOSColumnVisibility) { old, new in
+            if old == .detailOnly, new != .detailOnly {
+                applyFoldLayout(.sidebarOpenedByUser)
+            } else if old != .detailOnly, new == .detailOnly {
+                applyFoldLayout(.sidebarClosedByUser)
+            }
+        }
         .onChange(of: document != nil) { _, hasDocument in
             preferredCompactColumn = hasDocument ? .detail : .sidebar
         }
@@ -1017,6 +1031,7 @@ struct ContentView: View {
         // Any explicit choice (even re-picking the current mode) pins it for this book.
         isModeUserPinned = true
         userModeBaseline = mode
+        foldForcedSingleFrom = nil
         #endif
         guard mode != readingMode else { return }
         captureVisiblePage()
@@ -1037,6 +1052,34 @@ struct ContentView: View {
               mode != readingMode else { return }
         captureVisiblePage()
         readingMode = mode
+    }
+
+    /// Fold displays: a spread owns the fold, so the library column yields; reopening
+    /// the library yields the spread instead. See `FoldLayoutPolicy`. Keeps the visible page.
+    private func applyFoldLayout(_ event: FoldLayoutPolicy.Event) {
+        guard document != nil else { return }
+        switch FoldLayoutPolicy.action(
+            for: event,
+            hasDivision: foldDivision != nil,
+            isRegularWidth: horizontalSizeClass == .regular,
+            mode: readingMode,
+            sidebarVisible: iOSColumnVisibility != .detailOnly,
+            userPinnedMode: isModeUserPinned,
+            forcedSingleFrom: foldForcedSingleFrom
+        ) {
+        case .none:
+            break
+        case .collapseSidebar:
+            iOSColumnVisibility = .detailOnly
+        case .switchToSinglePage(let spread):
+            foldForcedSingleFrom = spread
+            captureVisiblePage()
+            readingMode = .singlePage
+        case .restore(let spread):
+            foldForcedSingleFrom = nil
+            captureVisiblePage()
+            readingMode = spread
+        }
     }
     #endif
 
@@ -1308,8 +1351,10 @@ struct ContentView: View {
         #if os(iOS)
         isModeUserPinned = false
         userModeBaseline = readingMode
+        foldForcedSingleFrom = nil
         preferredCompactColumn = .detail
         applyAutoSpread()
+        applyFoldLayout(.layoutChanged)
         #endif
     }
 
@@ -1417,6 +1462,33 @@ private extension View {
 #endif
 
 #if os(iOS)
+/// Reports the display's vertical fold (a reserved region of kind `.division`, iOS 27.1+)
+/// in global coordinates. Inactive regions count too: open and half-folded postures look
+/// the same to the app. Always nil before iOS 27.1 and on displays without a fold.
+private struct FoldDivisionReader: ViewModifier {
+    let onChange: (CGRect?) -> Void
+
+    func body(content: Content) -> some View {
+        content.background(
+            GeometryReader { proxy in
+                let fold = Self.division(in: proxy)
+                Color.clear
+                    .onAppear { onChange(fold) }
+                    .onChange(of: fold) { _, newFold in onChange(newFold) }
+            }
+        )
+    }
+
+    private static func division(in proxy: GeometryProxy) -> CGRect? {
+        guard #available(iOS 27.1, *) else { return nil }
+        let origin = proxy.frame(in: .global).origin
+        return proxy.reservedRegions(kind: .division, options: .includeInactive)
+            .map(\.frame)
+            .first { $0.height > $0.width && $0.width > 0 }?
+            .offsetBy(dx: origin.x, dy: origin.y)
+    }
+}
+
 /// Reader sheets (search, page browser) belong to the reader column. On iOS 27 the
 /// system can place them on the trailing side (the reader screen on iPhone Duo)
 /// instead of across the fold; earlier systems keep the default placement.
