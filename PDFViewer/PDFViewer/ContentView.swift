@@ -323,7 +323,7 @@ struct ContentView: View {
                             }
                         }
                 }
-                .modifier(ReaderSheetPlacement())
+                .modifier(ReaderSheetPlacement(isFoldDisplay: foldDivision != nil))
             }
         }
         .sheet(isPresented: $showSidebar) {
@@ -346,7 +346,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                .modifier(ReaderSheetPlacement())
+                .modifier(ReaderSheetPlacement(isFoldDisplay: foldDivision != nil))
             }
         }
     }
@@ -1550,12 +1550,14 @@ private struct FoldDivisionReader: ViewModifier {
     }
 }
 
-/// Reader sheets (search, page browser) belong to the reader column. On iOS 27 the
-/// system can place them on the trailing side (the reader screen on iPhone Duo)
-/// instead of across the fold; earlier systems keep the default placement.
+/// Reader sheets (search, page browser) on fold displays (a `.division` region, iOS 27.1+):
+/// trailing placement keeps them on the reader side instead of across the fold. Every
+/// other iPhone and iPad keeps the system default (centered form sheet, as on main).
 private struct ReaderSheetPlacement: ViewModifier {
+    let isFoldDisplay: Bool
+
     func body(content: Content) -> some View {
-        if #available(iOS 27.0, *) {
+        if #available(iOS 27.0, *), isFoldDisplay {
             content.presentationPlacement(.trailing)
         } else {
             content
