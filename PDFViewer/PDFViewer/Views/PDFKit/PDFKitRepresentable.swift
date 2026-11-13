@@ -242,6 +242,8 @@ struct PDFKitView: View {
                 onSingleTap: onSingleTap,
                 onDoubleTap: onDoubleTap
             )
+            // The Reduce Motion slide moves the page sideways; keep it inside the reader.
+            .clipped()
             #endif
         }
     }
@@ -547,6 +549,7 @@ struct iOS_PDFKitView: UIViewRepresentable {
         pageSource.attach(pdfView)
         pdfView.autoScales = true
         pdfView.pageBreakMargins = .zero
+        pdfView.accessibilityIdentifier = "PDFReader"
 
         NotificationCenter.default.addObserver(
             context.coordinator,
@@ -683,6 +686,7 @@ struct iOS_PDFKitView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     c.isProgrammaticNavigation = false
                 }
+                c.slideInIfPending(uiView)
             }
         }
 
@@ -721,6 +725,10 @@ struct iOS_PDFKitView: UIViewRepresentable {
         var displayRefreshID = 0
         var isDismantled = false
         private var swipeStartPage: Int?
+        /// Reduce Motion slide: a drag is moving the page, or a turn is animating.
+        private var isSliding = false
+        /// Set while the old page is off screen, waiting for the new page to slide in.
+        private var pendingSlideInFrom: CGFloat?
 
         init(parent: iOS_PDFKitView) {
             self.parent = parent
@@ -807,6 +815,13 @@ struct iOS_PDFKitView: UIViewRepresentable {
             guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
                   let view = pan.view else { return true }
             let velocity = pan.velocity(in: view)
+            if usesInteractiveSlide {
+                // The page follows the finger, so slow drags count too (they can begin with
+                // no measurable movement yet): only a clearly vertical start is left alone.
+                let translation = pan.translation(in: view)
+                let vertical = abs(translation.y) > abs(translation.x) * 1.2 && abs(velocity.y) > abs(velocity.x) * 1.2
+                return !vertical
+            }
             return abs(velocity.x) > abs(velocity.y) * 1.2 && abs(velocity.x) > 100
         }
 
@@ -825,6 +840,10 @@ struct iOS_PDFKitView: UIViewRepresentable {
             }
             guard !parent.isContinuous else {
                 swipeStartPage = nil
+                return
+            }
+            if usesInteractiveSlide || isSliding {
+                handleSlide(gesture, in: pdfView, document: document)
                 return
             }
 
@@ -870,6 +889,127 @@ struct iOS_PDFKitView: UIViewRepresentable {
             }
         }
 
+        /// The slide owns horizontal drags on the page: the navigation stack's swipe back
+        /// (edge pop, and the full-width content pop on iOS 26+) waits for it to fail, or a
+        /// rightward drag on iPhone would leave the book instead of turning back.
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard gestureRecognizer is UIPanGestureRecognizer,
+                  let pdfView = gestureRecognizer.view as? PDFView,
+                  usesInteractiveSlide,
+                  otherGestureRecognizer is UIPanGestureRecognizer,
+                  let otherView = otherGestureRecognizer.view,
+                  otherView !== pdfView,
+                  !otherView.isDescendant(of: pdfView) else { return false }
+            // Pans on the reader's ancestors are the navigation swipe backs.
+            return pdfView.isDescendant(of: otherView)
+        }
+
+        // MARK: Reduce Motion slide
+
+        /// Reduce Motion replaces the curl with a slide that follows the finger.
+        private var usesInteractiveSlide: Bool {
+            PageSlidePolicy.isActive(
+                reduceMotion: UIAccessibility.isReduceMotionEnabled,
+                isContinuous: parent.isContinuous,
+                zoom: parent.zoomLevel
+            )
+        }
+
+        private func canTurn(forward: Bool, in document: PDFDocument) -> Bool {
+            parent.readingMode.pageAfterTurn(from: parent.currentPage, totalPages: document.pageCount, forward: forward) != nil
+        }
+
+        private func handleSlide(_ gesture: UIPanGestureRecognizer, in pdfView: PDFView, document: PDFDocument) {
+            // Measured in the superview, which the slide never moves.
+            let space = pdfView.superview ?? pdfView
+            let translationX = gesture.translation(in: space).x
+            let isRTL = parent.readingMode.isRTL
+            let canForward = canTurn(forward: true, in: document)
+            let canBackward = canTurn(forward: false, in: document)
+            switch gesture.state {
+            case .began:
+                isSliding = true
+                pendingSlideInFrom = nil
+            case .changed:
+                let offset = PageSlidePolicy.displayedOffset(
+                    translationX: translationX, isRTL: isRTL, canGoForward: canForward, canGoBackward: canBackward
+                )
+                setSlideOffset(offset, on: pdfView)
+            case .ended:
+                let outcome = PageSlidePolicy.outcome(
+                    translationX: translationX,
+                    velocityX: gesture.velocity(in: space).x,
+                    pageWidth: pdfView.bounds.width,
+                    isRTL: isRTL,
+                    canGoForward: canForward,
+                    canGoBackward: canBackward
+                )
+                finishSlide(outcome, translationX: translationX, in: pdfView)
+            case .cancelled, .failed:
+                finishSlide(.cancel, translationX: translationX, in: pdfView)
+            default:
+                break
+            }
+        }
+
+        private func finishSlide(_ outcome: PageSlidePolicy.Outcome, translationX: CGFloat, in pdfView: PDFView) {
+            guard outcome != .cancel else {
+                setSlideOffset(0, on: pdfView, duration: 0.25) { [weak self] in self?.isSliding = false }
+                return
+            }
+            // The old page leaves the way it was dragged; the new one comes in from the other side.
+            let width = pdfView.bounds.width
+            let exitX = translationX < 0 ? -width : width
+            setSlideOffset(exitX, on: pdfView, duration: 0.18, timing: .easeIn) { [weak self] in
+                guard let self, !self.isDismantled else { return }
+                self.setSlideOffset(-exitX, on: pdfView)
+                self.pendingSlideInFrom = -exitX
+                if outcome == .turnForward { self.parent.onNext() } else { self.parent.onPrevious() }
+                // updateUIView slides the new page in once it is shown; this covers a turn that never lands.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.slideInIfPending(pdfView)
+                }
+            }
+        }
+
+        func slideInIfPending(_ pdfView: PDFView) {
+            guard pendingSlideInFrom != nil else { return }
+            pendingSlideInFrom = nil
+            setSlideOffset(0, on: pdfView, duration: 0.22) { [weak self] in self?.isSliding = false }
+        }
+
+        /// Moves the page's layers, not the view: SwiftUI owns the PDFView's frame and
+        /// undoes a view transform on its next layout pass.
+        private func setSlideOffset(
+            _ x: CGFloat,
+            on pdfView: PDFView,
+            duration: CFTimeInterval = 0,
+            timing: CAMediaTimingFunctionName = .easeOut,
+            completion: (() -> Void)? = nil
+        ) {
+            let layer = pdfView.layer
+            let keyPath = "sublayerTransform.translation.x"
+            let from = (layer.presentation()?.value(forKeyPath: keyPath) as? NSNumber)?.doubleValue
+                ?? (layer.value(forKeyPath: keyPath) as? NSNumber)?.doubleValue ?? 0
+            layer.removeAnimation(forKey: "pageSlide")
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            CATransaction.setCompletionBlock(completion)
+            layer.setValue(x, forKeyPath: keyPath)
+            if duration > 0 {
+                let animation = CABasicAnimation(keyPath: keyPath)
+                animation.fromValue = from
+                animation.toValue = x
+                animation.duration = duration
+                animation.timingFunction = CAMediaTimingFunction(name: timing)
+                layer.add(animation, forKey: "pageSlide")
+            }
+            CATransaction.commit()
+        }
+
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
@@ -904,4 +1044,5 @@ struct DocumentPicker: UIViewControllerRepresentable {
     }
 }
 #endif
+
 
