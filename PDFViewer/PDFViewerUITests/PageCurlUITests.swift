@@ -30,8 +30,10 @@ final class PageCurlUITests: XCTestCase {
     var page: String { app.textFields.firstMatch.value as? String ?? "?" }
     var reader: XCUIElement { app.descendants(matching: .any)["PageCurlReader"] }
 
+    /// Point inside the reader (not the window: on iPad the library column sits on the left).
     func point(_ x: CGFloat, _ y: CGFloat = 0.42) -> XCUICoordinate {
-        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
+        let target = reader.exists ? reader : app.windows.firstMatch
+        return target.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
     }
 
     func drag(_ from: CGFloat, _ to: CGFloat, velocity: XCUIGestureVelocity = .fast) {
