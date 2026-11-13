@@ -55,6 +55,43 @@ final class QADuoP1Tests: XCTestCase {
         write("pdfCenter top=\(top) bottom=\(bottom) tapY=\(y) win=\(win)\n")
         return app.windows.firstMatch.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: win.midX - win.minX, dy: y - win.minY))
     }
+    /// `TEST_RUNNER_QA_FOLD=455,495`: the fold band (pt, landscape) that reader panels must keep clear.
+    var foldBand: ClosedRange<CGFloat>? {
+        guard let v = env["QA_FOLD"]?.split(separator: ",").compactMap({ Double($0) }), v.count == 2 else { return nil }
+        return CGFloat(v[0])...CGFloat(v[1])
+    }
+    func onBand(_ f: CGRect, _ band: ClosedRange<CGFloat>) -> Bool { f.width > 0 && f.height > 0 && f.minX < band.upperBound && f.maxX > band.lowerBound }
+    /// Fold display: the search / browse panel lies wholly right of the fold and nothing tappable sits on the band.
+    func checkFoldPanel(_ band: ClosedRange<CGFloat>, _ key: String) {
+        let panel = app.otherElements["FoldReaderPanel"].firstMatch
+        XCTAssertTrue(panel.waitForExistence(timeout: 3), "\(key): no FoldReaderPanel on the fold display")
+        guard panel.exists else { return }
+        let pf = panel.frame
+        write("FOLDPANEL \(key) \(pf)\n")
+        XCTAssertGreaterThanOrEqual(pf.minX, band.upperBound, "\(key): panel reaches the fold \(pf)")
+        // The band check below only counts hittable elements, so the panel's own controls must be hittable.
+        let done = panel.buttons["完成"].firstMatch
+        XCTAssertTrue(done.exists && done.isHittable, "\(key): panel 完成 not hittable")
+        var hits: [String] = []
+        for e in panel.descendants(matching: .any).allElementsBoundByIndex.prefix(200) where e.exists && onBand(e.frame, band) && e.isHittable {
+            hits.append("panel \(e.elementType.rawValue) '\(e.label)' \(e.frame)")
+        }
+        for q in [app.buttons, app.textFields, app.searchFields, app.segmentedControls, app.cells] {
+            for e in q.allElementsBoundByIndex where e.exists && onBand(e.frame, band) && e.isHittable {
+                hits.append("app \(e.elementType.rawValue) '\(e.label)' \(e.frame)")
+            }
+        }
+        write("FOLDBAND \(key) hittable=\(hits)\n")
+        XCTAssertTrue(hits.isEmpty, "\(key): hittable on fold band \(band): \(hits)")
+    }
+    /// `TEST_RUNNER_QA_SHEET_CENTER=1` (iPad / iPhone without a fold): the sheet is the centered system sheet.
+    func checkCenteredSheet(_ key: String) {
+        let nb = app.navigationBars[key == "search" ? "搜尋" : "瀏覽"].firstMatch
+        XCTAssertTrue(nb.waitForExistence(timeout: 3), "\(key): sheet nav bar missing")
+        let w = app.windows.firstMatch.frame
+        write("CENTER \(key) sheet=\(nb.frame) windowMidX=\(w.midX)\n")
+        XCTAssertEqual(nb.frame.midX, w.midX, accuracy: 1, "\(key): sheet not centered \(nb.frame)")
+    }
     @MainActor func testP1Flow() throws {
         app = XCUIApplication()
         app.launchArguments = ["-recentPDFFiles_v2", try recentsArgument()]
@@ -107,6 +144,8 @@ final class QADuoP1Tests: XCTestCase {
                     guard b.waitForExistence(timeout: 3), b.isHittable else { write("sheet \(key)-\(n) button missing\n"); continue }
                     b.tap(); sleep(2)
                     shot("09-sheet-\(key)-\(n)"); log("sheet-\(key)-\(n)")
+                    if n == "l", let band = foldBand { checkFoldPanel(band, key) }
+                    if n == "l", env["QA_SHEET_CENTER"] != nil { checkCenteredSheet(key) }
                     let done = app.buttons.matching(NSPredicate(format: "label IN {'完成', 'Done', '關閉', 'Close', '取消', 'Cancel'}")).firstMatch
                     if done.exists && done.isHittable { done.tap() } else { app.swipeDown(velocity: .fast) }
                     sleep(2)

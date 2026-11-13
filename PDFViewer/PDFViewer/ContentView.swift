@@ -47,6 +47,8 @@ struct ContentView: View {
     @State private var windowWidth: CGFloat = 0
     /// The display's fold in global coordinates (iOS 27.1+ `.division` region); nil elsewhere.
     @State private var foldDivision: CGRect?
+    /// Top of the reader area (below its navigation bar), global; places the fold panel.
+    @State private var readerTopY: CGFloat = 0
     /// Pinned spread that `FoldLayoutPolicy` swapped for single page when the user reopened the library.
     @State private var foldForcedSingleFrom: ReadingMode?
     /// Global frame of the reader control bar, to keep its buttons off the fold.
@@ -311,42 +313,110 @@ struct ContentView: View {
                 Task { await loadPDF(from: url) }
             }
         }
-        .sheet(isPresented: $showSearch) {
-            if let document {
-                NavigationStack {
-                    searchSheet(document: document)
-                        .navigationTitle(String(localized: "搜尋"))
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button(String(localized: "完成")) { showSearch = false }
-                            }
-                        }
-                }
-                .modifier(ReaderSheetPlacement(isFoldDisplay: foldDivision != nil))
-            }
+        .sheet(isPresented: centeredSheet($showSearch)) {
+            if let document { iOSSearchPanel(document: document) }
         }
-        .sheet(isPresented: $showSidebar) {
-            if let document {
-                NavigationStack {
-                    DocumentSidebarView(
-                        document: document,
-                        currentPage: $currentPage,
-                        selectedTab: $sidebarTab,
-                        onSelectPage: { page in
-                            goToPage(page)
-                            showSidebar = false
+        .sheet(isPresented: centeredSheet($showSidebar)) {
+            if let document { iOSBrowsePanel(document: document) }
+        }
+        .overlay { foldReaderPanel }
+    }
+
+    /// Search and page browser present as the system's centered sheet, except on fold
+    /// displays, where `foldReaderPanel` shows them beside the fold instead.
+    private func centeredSheet(_ isShown: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { isShown.wrappedValue && foldDivision == nil }, set: { isShown.wrappedValue = $0 })
+    }
+
+    private static let foldPanelMargin: CGFloat = 8
+
+    /// Fold displays (a vertical `.division`): search and page browser fill the reader area
+    /// trailing the fold (below the reader's navigation bar), so nothing in them lies on the fold band.
+    @ViewBuilder
+    private var foldReaderPanel: some View {
+        if let fold = foldDivision, let document, showSearch || showSidebar {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .global).origin
+                let leading = max(0, fold.maxX - origin.x) + Self.foldPanelMargin
+                Group {
+                    if showSearch {
+                        foldPanelChrome(title: String(localized: "搜尋"), close: { showSearch = false }) {
+                            searchSheet(document: document)
                         }
-                    )
-                    .navigationTitle(String(localized: "瀏覽"))
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button(String(localized: "完成")) { showSidebar = false }
+                    } else {
+                        foldPanelChrome(title: String(localized: "瀏覽"), close: { showSidebar = false }) {
+                            browseContent(document: document)
                         }
                     }
                 }
-                .modifier(ReaderSheetPlacement(isFoldDisplay: foldDivision != nil))
+                .background(Color(uiColor: .systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: .black.opacity(0.25), radius: 12)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("FoldReaderPanel")
+                .padding(.leading, leading)
+                .padding(.top, max(0, readerTopY - origin.y))
+                .padding([.trailing, .bottom], Self.foldPanelMargin)
+            }
+            .ignoresSafeArea(edges: .bottom)
+            .transition(.move(edge: .trailing))
+        }
+    }
+
+    /// The fold panel's own header: a NavigationStack inside the detail column would hand its
+    /// toolbar to the reader's navigation bar, putting 完成 on the far side of the fold.
+    private func foldPanelChrome<Content: View>(
+        title: String, close: @escaping () -> Void, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+                HStack {
+                    Button(String(localized: "完成"), action: close).buttonStyle(.bordered)
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 52)
+            Divider()
+            content()
+        }
+    }
+
+    private func browseContent(document: PDFDocument) -> some View {
+        DocumentSidebarView(
+            document: document,
+            currentPage: $currentPage,
+            selectedTab: $sidebarTab,
+            onSelectPage: { page in
+                goToPage(page)
+                showSidebar = false
+            }
+        )
+    }
+
+    private func iOSSearchPanel(document: PDFDocument) -> some View {
+        NavigationStack {
+            searchSheet(document: document)
+                .navigationTitle(String(localized: "搜尋"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(String(localized: "完成")) { showSearch = false }
+                    }
+                }
+        }
+    }
+
+    private func iOSBrowsePanel(document: PDFDocument) -> some View {
+        NavigationStack {
+            browseContent(document: document)
+            .navigationTitle(String(localized: "瀏覽"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "完成")) { showSidebar = false }
+                }
             }
         }
     }
@@ -363,6 +433,11 @@ struct ContentView: View {
         } else {
             readerContainer
                 .onGeometryWidthChange { readerWidth = $0; applyAutoSpread() }
+                .background(GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { readerTopY = proxy.frame(in: .global).minY }
+                        .onChange(of: proxy.frame(in: .global).minY) { _, y in readerTopY = y }
+                })
                 .navigationTitle(currentFileName ?? "ComicPDFReader")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { iOSToolbar }
@@ -1547,21 +1622,6 @@ private struct FoldDivisionReader: ViewModifier {
             .map(\.frame)
             .first { $0.height > $0.width && $0.width > 0 }?
             .offsetBy(dx: origin.x, dy: origin.y)
-    }
-}
-
-/// Reader sheets (search, page browser) on fold displays (a `.division` region, iOS 27.1+):
-/// trailing placement keeps them on the reader side instead of across the fold. Every
-/// other iPhone and iPad keeps the system default (centered form sheet, as on main).
-private struct ReaderSheetPlacement: ViewModifier {
-    let isFoldDisplay: Bool
-
-    func body(content: Content) -> some View {
-        if #available(iOS 27.0, *), isFoldDisplay {
-            content.presentationPlacement(.trailing)
-        } else {
-            content
-        }
     }
 }
 
