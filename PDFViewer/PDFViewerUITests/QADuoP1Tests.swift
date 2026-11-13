@@ -2,7 +2,7 @@
 import XCTest
 final class QADuoP1Tests: XCTestCase {
     var env: [String: String] { ProcessInfo.processInfo.environment }
-    var out: String { env["QA_OUT"] ?? "/tmp/duo-p1" }
+    var out: String { env["QA_OUT"] ?? "/Users/steveyeh/Projects/PDFviewer/duo-tools/shots/qa" }
     var tag: String { env["QA_TAG"] ?? "x" }
     var app: XCUIApplication!
     func shot(_ n: String) {
@@ -28,6 +28,20 @@ final class QADuoP1Tests: XCTestCase {
         }
         write(s)
     }
+    /// Sample PDF the seeded recents entry points at. Override with
+    /// `TEST_RUNNER_QA_SAMPLE_PDF=/path/to.pdf xcodebuild test ...`.
+    var samplePath: String { env["QA_SAMPLE_PDF"] ?? "/Users/steveyeh/Projects/PDFviewer/duo-tools/sample.pdf" }
+    /// `-recentPDFFiles_v2` launch argument: the recents JSON as an NSData plist literal (`<hex>`).
+    func recentsArgument() throws -> String {
+        XCTAssertTrue(FileManager.default.fileExists(atPath: samplePath), "sample PDF missing at \(samplePath)")
+        let entry: [String: Any] = [
+            "id": "qa-sample", "path": samplePath, "name": (samplePath as NSString).lastPathComponent,
+            "lastOpened": 815000000.0, "currentPage": 1, "totalPages": 6, "readingMode": "singlePage",
+            "isContinuous": false, "appearance": "automatic", "zoomLevel": "fitPage",
+        ]
+        let json = try JSONSerialization.data(withJSONObject: [entry], options: [.sortedKeys])
+        return "<" + json.map { String(format: "%02x", $0) }.joined() + ">"
+    }
     /// Center of the PDF area: between the nav bar bottom and the top of the lowest control row, so the tap never lands on controls.
     func pdfCenter() -> XCUICoordinate {
         let win = app.windows.firstMatch.frame
@@ -43,7 +57,7 @@ final class QADuoP1Tests: XCTestCase {
     }
     @MainActor func testP1Flow() throws {
         app = XCUIApplication()
-        app.launchArguments = ["-recentPDFFiles_v2", "<5b7b226964223a202271612d73616d706c65222c202270617468223a20222f746d702f64756f2d70302f73616d706c652e706466222c20226e616d65223a202273616d706c652e706466222c20226c6173744f70656e6564223a203831353030303030302e302c202263757272656e7450616765223a20312c2022746f74616c5061676573223a20362c202272656164696e674d6f6465223a202273696e676c6550616765222c20226973436f6e74696e756f7573223a2066616c73652c2022617070656172616e6365223a20226175746f6d61746963222c20227a6f6f6d4c6576656c223a202266697450616765227d5d>"]
+        app.launchArguments = ["-recentPDFFiles_v2", try recentsArgument()]
         if let cs = env["QA_CS"] { app.launchArguments += ["-UIPreferredContentSizeCategoryName", cs] }
         app.launch()
         let orient: UIDeviceOrientation = env["QA_START"] == "land" ? .landscapeLeft : .portrait
